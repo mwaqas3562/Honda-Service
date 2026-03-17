@@ -1,0 +1,255 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Categories ──────────────────────────────────
+
+model Category {
+  id            Int           @id @default(autoincrement())
+  name          String        @unique
+  subcategories Subcategory[]
+  parts         Part[]
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  @@map("categories")
+}
+
+model Subcategory {
+  id         Int      @id @default(autoincrement())
+  name       String
+  categoryId Int      @map("category_id")
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  parts      Part[]
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([categoryId, name])
+  @@map("subcategories")
+}
+
+// ─── Vendors ─────────────────────────────────────
+
+model Vendor {
+  id        Int        @id @default(autoincrement())
+  name      String
+  phone     String?
+  address   String?
+  purchases Purchase[]
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  @@map("vendors")
+}
+
+// ─── Parts ───────────────────────────────────────
+
+model Part {
+  id            Int           @id @default(autoincrement())
+  name          String
+  partNumber    String        @unique @map("part_number")
+  category      String
+  categoryId    Int?          @map("category_id")
+  categoryRel   Category?     @relation(fields: [categoryId], references: [id])
+  subcategoryId Int?          @map("subcategory_id")
+  subcategory   Subcategory?  @relation(fields: [subcategoryId], references: [id])
+  purchasePrice Float         @map("purchase_price")
+  salePrice     Float         @map("sale_price")
+  stock         Int           @default(0)
+  minStock      Int           @default(5) @map("min_stock")
+  aliases       String[]      @default([])
+  usageCount    Int           @default(0) @map("usage_count")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  stockLogs     StockLog[]
+  purchaseItems PurchaseItem[]
+  saleItems     SaleItem[]
+  serviceItems  ServiceItem[]
+
+  @@index([category])
+  @@index([name])
+  @@index([categoryId])
+  @@map("parts")
+}
+
+// ─── Stock Logs ──────────────────────────────────
+
+model StockLog {
+  id            Int      @id @default(autoincrement())
+  partId        Int      @map("part_id")
+  part          Part     @relation(fields: [partId], references: [id], onDelete: Cascade)
+  type          String   // "purchase" | "sale" | "service" | "adjustment"
+  quantity      Int
+  prevStock     Int      @map("prev_stock")
+  newStock      Int      @map("new_stock")
+  purchasePrice Float?   @map("purchase_price")
+  prevPrice     Float?   @map("prev_price")
+  note          String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([partId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("stock_logs")
+}
+
+// ─── Purchases ───────────────────────────────────
+
+model Purchase {
+  id        Int            @id @default(autoincrement())
+  vendorId  Int            @map("vendor_id")
+  vendor    Vendor         @relation(fields: [vendorId], references: [id])
+  status    String         @default("received") // "ordered" | "in_transit" | "received"
+  total     Float          @default(0)
+  note      String?
+  items     PurchaseItem[]
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  @@index([vendorId])
+  @@index([createdAt])
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id         Int      @id @default(autoincrement())
+  purchaseId Int      @map("purchase_id")
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  partId     Int      @map("part_id")
+  part       Part     @relation(fields: [partId], references: [id], onDelete: Restrict)
+  quantity   Int
+  unitPrice  Float    @map("unit_price")
+  total      Float
+
+  @@map("purchase_items")
+}
+
+// ─── Labour Master ───────────────────────────────
+
+model Labour {
+  id           Int              @id @default(autoincrement())
+  name         String
+  defaultPrice Float            @default(0) @map("default_price")
+  notes        String?
+  saleLabours  SaleLabourItem[]
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  @@index([name])
+  @@map("labours")
+}
+
+// ─── Sales ───────────────────────────────────────
+
+model Sale {
+  id          Int              @id @default(autoincrement())
+  jobCardId   Int?             @map("job_card_id")
+  jobCard     JobCard?         @relation(fields: [jobCardId], references: [id])
+  customer    String?
+  date        DateTime         @default(now())
+  laborCost   Float            @default(0) @map("labor_cost")
+  subtotal    Float            @default(0)
+  discount    Float            @default(0)
+  total       Float            @default(0)
+  paymentType String           @default("cash") @map("payment_type") // "cash" | "card" | "credit"
+  status      String           @default("draft") // "draft" | "final"
+  finalizedAt DateTime?        @map("finalized_at")
+  items       SaleItem[]
+  labourItems SaleLabourItem[]
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  @@index([jobCardId])
+  @@index([date])
+  @@index([createdAt])
+  @@index([status])
+  @@map("sales")
+}
+
+model SaleItem {
+  id        Int   @id @default(autoincrement())
+  saleId    Int   @map("sale_id")
+  sale      Sale  @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  partId    Int   @map("part_id")
+  part      Part  @relation(fields: [partId], references: [id], onDelete: Restrict)
+  quantity  Int
+  unitPrice Float @map("unit_price")
+  total     Float
+
+  @@map("sale_items")
+}
+
+model SaleLabourItem {
+  id        Int    @id @default(autoincrement())
+  saleId    Int    @map("sale_id")
+  sale      Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  labourId  Int    @map("labour_id")
+  labour    Labour @relation(fields: [labourId], references: [id], onDelete: Restrict)
+  quantity  Int    @default(1)
+  unitPrice Float  @map("unit_price")
+  total     Float
+
+  @@map("sale_labour_items")
+}
+
+// ─── Services ────────────────────────────────────
+
+model Service {
+  id            Int           @id @default(autoincrement())
+  customerName  String        @map("customer_name")
+  customerPhone String?       @map("customer_phone")
+  bikeModel     String        @map("bike_model")
+  bikeRegNo     String?       @map("bike_reg_no")
+  serviceType   String        @map("service_type")
+  status        String        @default("pending") // "pending" | "in_progress" | "completed"
+  laborCost     Float         @default(0) @map("labor_cost")
+  total         Float         @default(0)
+  note          String?
+  items         ServiceItem[]
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("services")
+}
+
+model ServiceItem {
+  id        Int     @id @default(autoincrement())
+  serviceId Int     @map("service_id")
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  partId    Int     @map("part_id")
+  part      Part    @relation(fields: [partId], references: [id], onDelete: Restrict)
+  quantity  Int
+  unitPrice Float   @map("unit_price")
+  total     Float
+
+  @@map("service_items")
+}
+
+// ─── Job Cards ───────────────────────────────────
+
+model JobCard {
+  id             Int      @id @default(autoincrement())
+  jobCardNumber  String   @unique @map("job_card_number")
+  customerName   String   @map("customer_name")
+  customerPhone  String   @map("customer_phone")
+  vehicleNumber  String   @map("vehicle_number")
+  meterReading   Int      @map("meter_reading")
+  bikeModel      String   @map("bike_model")
+  mechanicName   String   @map("mechanic_name")
+  laborCost      Float    @default(0) @map("labor_cost")
+  status         String   @default("open") // "open" | "completed"
+  sales          Sale[]
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([jobCardNumber])
+  @@index([customerPhone])
+  @@index([vehicleNumber])
+  @@index([status])
+  @@map("job_cards")
+}
