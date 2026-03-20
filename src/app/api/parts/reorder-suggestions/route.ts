@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { n } from "@/lib/utils";
 
 // GET /api/parts/reorder-suggestions — low stock parts with last purchase info
 export async function GET() {
@@ -35,7 +36,7 @@ export async function GET() {
           lastVendorId: lastPurchaseItem?.purchase?.vendor?.id ?? null,
           lastPurchasePrice: lastPurchaseItem?.unitPrice ?? null,
           lastPurchaseDate: lastPurchaseItem?.purchase?.createdAt ?? null,
-          estimatedCost: suggestedQty * (lastPurchaseItem?.unitPrice ?? part.purchasePrice),
+          estimatedCost: suggestedQty * n(lastPurchaseItem?.unitPrice ?? part.purchasePrice),
         };
       })
     );

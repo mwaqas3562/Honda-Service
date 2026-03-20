@@ -13,6 +13,7 @@ export interface Part {
   stock: number;
   minStock: number;
   aliases: string[];
+  usageCount?: number;
 }
 
 interface PartRowProps {

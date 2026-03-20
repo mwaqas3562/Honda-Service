@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, ArrowUpCircle, ArrowDownCircle, Settings } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
+import { fmtRs } from "@/lib/utils";
 
 interface StockLog {
   id: number;
@@ -44,7 +45,7 @@ export default function StockLogsPage() {
 
   const logs = filter === "all" ? allLogs : allLogs.filter((l) => getDirection(l.type) === filter);
 
-  const fmtRs = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
+
   const typeIcon = (type: string) => {
     const dir = getDirection(type);
     if (dir === "in") return <ArrowUpCircle className="w-4 h-4 text-green-500" />;

@@ -75,7 +75,7 @@ export default function Modal({ open, onClose, title, children, wide }: ModalPro
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/50" onClick={onClose} />
-      <div ref={modalRef} className={`relative bg-white rounded-xl shadow-xl w-full ${wide ? "max-w-6xl" : "max-w-lg"} mx-4 max-h-[90vh] flex flex-col`}>
+      <div ref={modalRef} className={`relative bg-white rounded-xl shadow-xl w-full ${wide ? "max-w-6xl" : "max-w-lg"} mx-4 max-h-[95vh] flex flex-col`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
           <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
           <button

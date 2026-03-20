@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { ToastProvider } from "@/components/Toast";
@@ -11,6 +11,28 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Prevent scroll-wheel and arrow keys from changing number input values globally
+  useEffect(() => {
+    function handleWheel(e: WheelEvent) {
+      const el = e.target as HTMLInputElement;
+      if (el.tagName === "INPUT" && (el.type === "number" || el.inputMode === "numeric")) {
+        el.blur();
+      }
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      const el = e.target as HTMLInputElement;
+      if (el.tagName === "INPUT" && el.type === "number" && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+      }
+    }
+    document.addEventListener("wheel", handleWheel, { passive: true });
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("wheel", handleWheel);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   return (
     <ToastProvider>

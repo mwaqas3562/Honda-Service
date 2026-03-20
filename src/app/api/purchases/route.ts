@@ -1,24 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+import { round2, n } from "@/lib/utils";
 
 // GET /api/purchases — list purchases
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const vendorId = searchParams.get("vendorId");
+    const page = Math.max(parseInt(searchParams.get("page") || "1") || 1, 1);
+    const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "100") || 100, 1), 500);
+    const skip = (page - 1) * limit;
 
-    const purchases = await prisma.purchase.findMany({
-      where: vendorId ? { vendorId: parseInt(vendorId, 10) } : undefined,
-      include: {
-        vendor: true,
-        items: { include: { part: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const where = vendorId ? { vendorId: parseInt(vendorId, 10) } : undefined;
 
-    return NextResponse.json(purchases);
+    const [purchases, total] = await Promise.all([
+      prisma.purchase.findMany({
+        where,
+        include: {
+          vendor: true,
+          items: { include: { part: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.purchase.count({ where }),
+    ]);
+
+    return NextResponse.json({ data: purchases, total, page, limit });
   } catch (error) {
     console.error("GET /api/purchases error:", error);
     return NextResponse.json({ error: "Failed to fetch purchases" }, { status: 500 });
@@ -45,12 +55,16 @@ export async function POST(req: NextRequest) {
       if (item.unitPrice == null || item.unitPrice < 0) return NextResponse.json({ error: `Item ${i + 1}: Unit price must be non-negative` }, { status: 400 });
     }
 
-    const purchaseItems = items.map((item: { partId: number; quantity: number; unitPrice: number }) => ({
-      partId: item.partId,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      total: round2(item.quantity * item.unitPrice),
-    }));
+    const purchaseItems = items.map((item: { partId: number; quantity: number; unitPrice: number }) => {
+      const qty = Math.max(1, Math.round(item.quantity));
+      const price = Math.max(0, item.unitPrice);
+      return {
+        partId: item.partId,
+        quantity: qty,
+        unitPrice: price,
+        total: round2(qty * price),
+      };
+    });
 
     const total = purchaseItems.reduce((sum: number, i: { total: number }) => sum + i.total, 0);
     const purchaseStatus = status || "received";
@@ -76,7 +90,7 @@ export async function POST(req: NextRequest) {
           const prevStock = part.stock;
           const newStock = prevStock + item.quantity;
           const newAvgPrice = round2(
-            ((prevStock * part.purchasePrice) + (item.quantity * item.unitPrice)) / newStock
+            ((prevStock * n(part.purchasePrice)) + (item.quantity * item.unitPrice)) / newStock
           );
 
           await tx.part.update({

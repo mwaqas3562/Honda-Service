@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { n } from "@/lib/utils";
 
 export async function GET() {
   try {
@@ -41,11 +42,11 @@ export async function GET() {
     const totalStock = allParts.reduce((sum, p) => sum + p.stock, 0);
     const lowStockCount = allParts.filter((p) => p.stock > 0 && p.stock <= p.minStock).length;
     const outOfStockCount = allParts.filter((p) => p.stock === 0).length;
-    const totalInventoryValue = Math.round(allParts.reduce((sum, p) => sum + p.purchasePrice * p.stock, 0) * 100) / 100;
+    const totalInventoryValue = Math.round(allParts.reduce((sum, p) => sum + n(p.purchasePrice) * p.stock, 0) * 100) / 100;
 
-    const totalSalesRevenue = Math.round((salesAgg._sum.total || 0) * 100) / 100;
+    const totalSalesRevenue = Math.round(n(salesAgg._sum.total) * 100) / 100;
     const totalSalesCount = salesAgg._count;
-    const totalServicesRevenue = Math.round((servicesAgg._sum.total || 0) * 100) / 100;
+    const totalServicesRevenue = Math.round(n(servicesAgg._sum.total) * 100) / 100;
 
     // Today aggregations
     const todayFinalSales = todaySales.filter((s) => s.status === "final");
@@ -64,12 +65,12 @@ export async function GET() {
       // Today's metrics
       todayJobCardsCount: todayJobCards.length,
       todayPurchasesCount: todayPurchases.length,
-      todayPurchasesAmount: Math.round(todayPurchases.reduce((s, p) => s + p.total, 0) * 100) / 100,
+      todayPurchasesAmount: Math.round(todayPurchases.reduce((s, p) => s + n(p.total), 0) * 100) / 100,
       todaySalesCount: todayFinalSales.length,
-      todaySalesRevenue: Math.round(todayFinalSales.reduce((s, sale) => s + sale.total, 0) * 100) / 100,
+      todaySalesRevenue: Math.round(todayFinalSales.reduce((s, sale) => s + n(sale.total), 0) * 100) / 100,
       todayDraftsCount: todayDraftSales.length,
       todayServicesCount: todayServices.length,
-      todayServicesRevenue: Math.round(todayServices.reduce((s, svc) => s + svc.total, 0) * 100) / 100,
+      todayServicesRevenue: Math.round(todayServices.reduce((s, svc) => s + n(svc.total), 0) * 100) / 100,
       // Recent sales with job card info
       recentSales: recentSales.map((s) => ({
         id: s.id,

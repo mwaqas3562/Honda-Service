@@ -52,10 +52,11 @@ export async function POST(req: NextRequest) {
     // Check if part exists
     const existingPart = await prisma.part.findUnique({
       where: { partNumber: partNumber.trim() },
+      select: { id: true },
     });
 
     if (existingPart) {
-      // Part exists → update stock + weighted average price
+      // Part exists — addStockEntry validates & updates atomically inside a transaction
       const result = await addStockEntry(
         existingPart.id,
         quantity,
@@ -84,18 +85,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const safeQty = Math.max(1, Math.round(quantity));
+    const safePrice = Math.max(0, Math.round(purchasePrice));
+
+    // Resolve category name → categoryId
+    const cat = await prisma.category.upsert({
+      where: { name: category.trim() },
+      update: {},
+      create: { name: category.trim() },
+    });
 
     const newPart = await prisma.$transaction(async (tx) => {
       const part = await tx.part.create({
         data: {
           name: name.trim(),
           partNumber: partNumber.trim(),
-          category: category.trim(),
-          purchasePrice: round2(purchasePrice),
-          salePrice: round2(salePrice ?? 0),
-          stock: quantity,
-          minStock: minStock ?? 5,
+          categoryId: cat.id,
+          purchasePrice: safePrice,
+          salePrice: Math.round(salePrice ?? 0),
+          stock: safeQty,
+          minStock: Math.round(minStock ?? 5),
         },
       });
 
@@ -103,10 +112,10 @@ export async function POST(req: NextRequest) {
         data: {
           partId: part.id,
           type: "purchase",
-          quantity,
+          quantity: safeQty,
           prevStock: 0,
-          newStock: quantity,
-          purchasePrice: round2(purchasePrice),
+          newStock: safeQty,
+          purchasePrice: safePrice,
           prevPrice: 0,
           note: note || `Initial stock: ${quantity} units @ Rs ${purchasePrice}`,
         },
@@ -118,16 +127,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         action: "created",
-        message: `New part "${newPart.name}" created with ${quantity} units @ Rs ${round2(purchasePrice)}`,
+        message: `New part "${newPart.name}" created with ${safeQty} units @ Rs ${safePrice}`,
         data: {
           partId: newPart.id,
           partName: newPart.name,
           prevStock: 0,
-          newStock: quantity,
-          addedQuantity: quantity,
+          newStock: safeQty,
+          addedQuantity: safeQty,
           prevPrice: 0,
-          newPrice: round2(purchasePrice),
-          purchasePrice: round2(purchasePrice),
+          newPrice: safePrice,
+          purchasePrice: safePrice,
         },
       },
       { status: 201 }

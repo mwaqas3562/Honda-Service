@@ -11,12 +11,13 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       return NextResponse.json({ error: "Invalid part ID" }, { status: 400 });
     }
 
-    const part = await prisma.part.findUnique({ where: { id } });
+    const part = await prisma.part.findUnique({ where: { id }, include: { category: true } });
     if (!part) {
       return NextResponse.json({ error: "Part not found" }, { status: 404 });
     }
 
-    return NextResponse.json(part);
+    const { category: cat, ...rest } = part;
+    return NextResponse.json({ ...rest, category: cat?.name || null });
   } catch (error) {
     console.error("GET /api/parts/[id] error:", error);
     return NextResponse.json(
@@ -40,7 +41,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     }
 
     const body = await req.json();
-    const { name, partNumber, category, purchasePrice, salePrice, stock, minStock, aliases } = body;
+    const { name, partNumber, category, categoryId, purchasePrice, salePrice, stock, minStock, aliases } = body;
 
     // Validation
     const errors: string[] = [];
@@ -48,7 +49,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       errors.push("Name must be a non-empty string");
     if (partNumber !== undefined && (typeof partNumber !== "string" || !partNumber))
       errors.push("Part number must be a non-empty string");
-    if (category !== undefined && (typeof category !== "string" || !category))
+    if (category !== undefined && categoryId === undefined && (typeof category !== "string" || !category))
       errors.push("Category must be a non-empty string");
     if (purchasePrice !== undefined && (typeof purchasePrice !== "number" || purchasePrice < 0))
       errors.push("Purchase price must be a non-negative number");
@@ -79,7 +80,18 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
     if (partNumber !== undefined) data.partNumber = partNumber;
-    if (category !== undefined) data.category = category;
+    if (category !== undefined || categoryId !== undefined) {
+      if (categoryId) {
+        data.categoryId = categoryId;
+      } else if (category) {
+        const cat = await prisma.category.upsert({
+          where: { name: category.trim() },
+          update: {},
+          create: { name: category.trim() },
+        });
+        data.categoryId = cat.id;
+      }
+    }
     if (purchasePrice !== undefined) data.purchasePrice = purchasePrice;
     if (salePrice !== undefined) data.salePrice = salePrice;
     if (stock !== undefined) data.stock = stock;
@@ -89,9 +101,11 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     const part = await prisma.part.update({
       where: { id },
       data,
+      include: { category: true },
     });
 
-    return NextResponse.json(part);
+    const { category: cat, ...rest } = part;
+    return NextResponse.json({ ...rest, category: cat?.name || null });
   } catch (error) {
     console.error("PUT /api/parts/[id] error:", error);
     return NextResponse.json(

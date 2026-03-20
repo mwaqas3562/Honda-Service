@@ -167,13 +167,20 @@ export async function POST(req: NextRequest) {
       const minStock = Math.max(0, Math.round(Number(row.minStock) || 5));
 
       try {
+        // Resolve category name → categoryId
+        const cat = await prisma.category.upsert({
+          where: { name: category },
+          update: {},
+          create: { name: category },
+        });
+
         const existingByName = await prisma.part.findFirst({
           where: { name: { equals: name, mode: "insensitive" } },
         });
         if (existingByName) {
           await prisma.part.update({
             where: { id: existingByName.id },
-            data: { category, purchasePrice, salePrice, stock, minStock },
+            data: { categoryId: cat.id, purchasePrice, salePrice, stock, minStock },
           });
           updated++; continue;
         }
@@ -182,13 +189,13 @@ export async function POST(req: NextRequest) {
         if (existingByPN) {
           await prisma.part.update({
             where: { partNumber },
-            data: { name, category, purchasePrice, salePrice, stock, minStock },
+            data: { name, categoryId: cat.id, purchasePrice, salePrice, stock, minStock },
           });
           updated++; continue;
         }
 
         await prisma.part.create({
-          data: { name, partNumber, category, purchasePrice, salePrice, stock, minStock },
+          data: { name, partNumber, categoryId: cat.id, purchasePrice, salePrice, stock, minStock },
         });
         created++;
       } catch (err) {

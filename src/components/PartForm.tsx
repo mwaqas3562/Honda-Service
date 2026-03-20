@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import IntegerInput from "@/components/IntegerInput";
 
 export interface PartFormData {
   name: string;
@@ -153,7 +154,7 @@ export default function PartForm({ initialData, onSubmit, onCancel }: PartFormPr
           }}
           onBlur={() => {
             // Clean up on blur: trim, lowercase, dedupe, remove empties
-            const cleaned = [...new Set(form.aliases.map((a) => a.trim().toLowerCase()).filter(Boolean))];
+            const cleaned = Array.from(new Set(form.aliases.map((a) => a.trim().toLowerCase()).filter(Boolean)));
             update("aliases", cleaned);
           }}
           className={inputClass("aliases")}
@@ -166,22 +167,18 @@ export default function PartForm({ initialData, onSubmit, onCancel }: PartFormPr
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Price (Rs)</label>
-          <input
-            type="number"
-            min="0"
+          <IntegerInput
             value={form.purchasePrice}
-            onChange={(e) => update("purchasePrice", Math.round(parseFloat(e.target.value) || 0))}
+            onChange={(v) => update("purchasePrice", parseInt(v, 10) || 0)}
             className={inputClass("purchasePrice")}
           />
           {errors.purchasePrice && <p className="text-xs text-red-500 mt-1">{errors.purchasePrice}</p>}
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Sale Price (Rs)</label>
-          <input
-            type="number"
-            min="0"
+          <IntegerInput
             value={form.salePrice}
-            onChange={(e) => update("salePrice", Math.round(parseFloat(e.target.value) || 0))}
+            onChange={(v) => update("salePrice", parseInt(v, 10) || 0)}
             className={inputClass("salePrice")}
           />
           {errors.salePrice && <p className="text-xs text-red-500 mt-1">{errors.salePrice}</p>}
@@ -192,22 +189,18 @@ export default function PartForm({ initialData, onSubmit, onCancel }: PartFormPr
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Stock</label>
-          <input
-            type="number"
-            min="0"
+          <IntegerInput
             value={form.stock}
-            onChange={(e) => update("stock", parseInt(e.target.value) || 0)}
+            onChange={(v) => update("stock", parseInt(v, 10) || 0)}
             className={inputClass("stock")}
           />
           {errors.stock && <p className="text-xs text-red-500 mt-1">{errors.stock}</p>}
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Min Stock Alert</label>
-          <input
-            type="number"
-            min="0"
+          <IntegerInput
             value={form.minStock}
-            onChange={(e) => update("minStock", parseInt(e.target.value) || 0)}
+            onChange={(v) => update("minStock", parseInt(v, 10) || 0)}
             className={inputClass("minStock")}
           />
           {errors.minStock && <p className="text-xs text-red-500 mt-1">{errors.minStock}</p>}

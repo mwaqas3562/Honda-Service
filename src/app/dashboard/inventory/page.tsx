@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, AlertTriangle, PackagePlus, RefreshCw, Upload, FileSpreadsheet, CheckCircle, XCircle, Download, Trash2 } from "lucide-react";
+import { Plus, PackagePlus, RefreshCw, Upload, FileSpreadsheet, CheckCircle, XCircle, Download, Trash2 } from "lucide-react";
 import * as XLSX from "xlsx";
 import PageHeader from "@/components/PageHeader";
 import SearchBar from "@/components/SearchBar";
@@ -48,6 +48,7 @@ export default function InventoryPage() {
   const [parts, setParts] = useState<Part[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [category, setCategory] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [showStockModal, setShowStockModal] = useState(false);
@@ -76,23 +77,29 @@ export default function InventoryPage() {
   } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const fetchParts = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (search) params.set("search", search);
+      if (debouncedSearch) params.set("search", debouncedSearch);
       if (category) params.set("category", category);
       const res = await fetch(`/api/parts?${params.toString()}`);
       if (res.ok) {
-        const data = await res.json();
-        setParts(data);
+        const json = await res.json();
+        setParts(json.data ?? json);
       }
     } catch (err) {
       console.error("Failed to fetch parts:", err);
     } finally {
       setLoading(false);
     }
-  }, [search, category]);
+  }, [debouncedSearch, category]);
 
   const fetchLowStock = useCallback(async () => {
     try {
@@ -334,27 +341,6 @@ export default function InventoryPage() {
           </div>
         }
       />
-
-      {/* Low Stock Alert Banner */}
-      {lowStockParts.length > 0 && (
-        <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="text-sm font-semibold text-yellow-800">
-              Low Stock Alert — {lowStockParts.length} item{lowStockParts.length > 1 ? "s" : ""} need restocking
-            </p>
-            {lowStockParts.length <= 5 ? (
-              <p className="text-xs text-yellow-700 mt-1">
-                {lowStockParts.map((p) => p.name).join(", ")}
-              </p>
-            ) : (
-              <p className="text-xs text-yellow-700 mt-1">
-                {lowStockParts.slice(0, 5).map((p) => p.name).join(", ")} and {lowStockParts.length - 5} more…
-              </p>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Search & Filter Bar */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">

@@ -7,6 +7,8 @@ import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import SmartPartSearch, { type SearchablePart } from "@/components/SmartPartSearch";
+import IntegerInput from "@/components/IntegerInput";
+import { fmtRs } from "@/lib/utils";
 
 interface SaleLabourItem {
   id: number;
@@ -34,7 +36,6 @@ interface JobCard {
   vehicleNumber: string;
   meterReading: number;
   bikeModel: string;
-  mechanicName: string;
   laborCost: number;
   status: string;
 }
@@ -146,7 +147,10 @@ export default function SalesPage() {
     setLoading(true);
     try {
       const res = await fetch("/api/sales");
-      if (res.ok) setSales(await res.json());
+      if (res.ok) {
+        const json = await res.json();
+        setSales(json.data ?? json);
+      }
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }, []);
@@ -154,7 +158,10 @@ export default function SalesPage() {
   const fetchParts = useCallback(async () => {
     try {
       const res = await fetch("/api/parts");
-      if (res.ok) setParts(await res.json());
+      if (res.ok) {
+        const json = await res.json();
+        setParts(json.data ?? json);
+      }
     } catch (err) { console.error(err); }
   }, []);
 
@@ -168,7 +175,10 @@ export default function SalesPage() {
   const fetchJobCards = useCallback(async () => {
     try {
       const res = await fetch("/api/job-cards?status=open");
-      if (res.ok) setJobCards(await res.json());
+      if (res.ok) {
+        const json = await res.json();
+        setJobCards(json.data ?? json);
+      }
     } catch (err) { console.error(err); }
   }, []);
 
@@ -242,7 +252,10 @@ export default function SalesPage() {
   }, []);
 
   function updateItemQty(id: number, qty: number) {
-    setItems((prev) => prev.map((i) => i.id === id ? { ...i, quantity: Math.max(1, Math.min(qty, i.stock)) } : i));
+    setItems((prev) => prev.map((i) => i.id === id ? { ...i, quantity: Math.min(qty, i.stock) } : i));
+  }
+  function clampItemQty(id: number) {
+    setItems((prev) => prev.map((i) => i.id === id ? { ...i, quantity: Math.max(1, Math.min(i.quantity, i.stock)) } : i));
   }
 
   function updateItemPrice(id: number, price: number) {
@@ -276,11 +289,13 @@ export default function SalesPage() {
     setLabourSearch("");
     setLabourDropdownOpen(false);
     setLabourHighlight(0);
-    setTimeout(() => labourSearchRef.current?.focus(), 0);
   }
 
   function updateLabourQty(id: number, qty: number) {
-    setLabourItems((prev) => prev.map((i) => i.id === id ? { ...i, quantity: Math.max(1, qty) } : i));
+    setLabourItems((prev) => prev.map((i) => i.id === id ? { ...i, quantity: qty } : i));
+  }
+  function clampLabourQty(id: number) {
+    setLabourItems((prev) => prev.map((i) => i.id === id ? { ...i, quantity: Math.max(1, i.quantity) } : i));
   }
 
   function updateLabourPrice(id: number, price: number) {
@@ -372,6 +387,15 @@ export default function SalesPage() {
       }
     }
 
+    // Block non-credit sales with remaining amount
+    if (paymentType !== "credit") {
+      const total = liveTotal;
+      const received = Math.round(parseFloat(cashReceived) || 0);
+      if (received < total) {
+        return setError(`Cash received (Rs ${received}) is less than total (Rs ${total}). Use "Credit" payment type for partial payments.`);
+      }
+    }
+
     setFormLoading(true);
     try {
       const body = {
@@ -454,7 +478,7 @@ export default function SalesPage() {
   }
 
   // --- Helpers ---
-  const fmtRs = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
+
   const paymentColor: Record<string, string> = {
     cash: "bg-green-100 text-green-700",
     card: "bg-blue-100 text-blue-700",
@@ -472,12 +496,17 @@ export default function SalesPage() {
   const filtered = useMemo(() => {
     return sales.filter((s) => {
       if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        const matchName = (s.customer || "").toLowerCase().includes(q);
-        const matchItems = s.items.some((i) => i.part.name.toLowerCase().includes(q));
-        const matchId = `S${String(s.id).padStart(3, "0")}`.toLowerCase().includes(q);
-        const matchJC = (s.jobCard?.jobCardNumber || "").toLowerCase().includes(q);
-        if (!matchName && !matchItems && !matchId && !matchJC) return false;
+        const words = searchQuery.toLowerCase().trim().split(/\s+/).filter(Boolean);
+        if (words.length > 0) {
+          const haystack = [
+            s.customer || "",
+            ...s.items.map((i) => i.part.name),
+            `S${String(s.id).padStart(3, "0")}`,
+            s.jobCard?.jobCardNumber || "",
+          ].join(" ").toLowerCase();
+          const allMatch = words.every((w) => haystack.includes(w));
+          if (!allMatch) return false;
+        }
       }
       if (paymentFilter && s.paymentType !== paymentFilter) return false;
       if (statusFilter && s.status !== statusFilter) return false;
@@ -579,7 +608,6 @@ export default function SalesPage() {
 ${s.jobCard ? `<div class="row"><span><b>Reg#</b> ${esc(s.jobCard.vehicleNumber)}</span><span>${esc(s.jobCard.bikeModel)}</span></div>` : ""}
 <div style="font-size:10px"><b>Customer</b> ${esc(s.customer || "Walk-in")}</div>
 ${s.jobCard ? `<div style="font-size:10px"><b>Phone</b> ${esc(s.jobCard.customerPhone)}</div>` : ""}
-${s.jobCard ? `<div style="font-size:10px"><b>Mechanic</b> ${esc(s.jobCard.mechanicName)}</div>` : ""}
 
 <table class="items-tbl" style="margin-top:2px;font-size:10px;border-top:1px solid #000;border-bottom:1px solid #000">
   <colgroup><col><col><col><col></colgroup>
@@ -738,7 +766,12 @@ ${s.discount > 0 ? `<div class="row" style="font-size:11px"><span><b>Discount</b
                       <div className="truncate">{sale.items.map((i) => `${i.part.name} ×${i.quantity}`).join(", ")}</div>
                       <div className="text-xs text-gray-400 mt-0.5">{sale.items.length} part(s){(sale.labourItems || []).length > 0 ? `, ${sale.labourItems.length} labour` : ""}</div>
                     </td>
-                    <td className="px-5 py-3.5 text-sm font-bold text-right text-gray-900">{fmtRs(sale.total)}</td>
+                    <td className="px-5 py-3.5 text-right">
+                      <div className="text-sm font-bold text-gray-900">{fmtRs(sale.total)}</div>
+                      {sale.discount > 0 && (
+                        <div className="text-[10px] text-red-500 mt-0.5">Disc: {fmtRs(sale.discount)}</div>
+                      )}
+                    </td>
                     <td className="px-5 py-3.5 text-center">
                       {sale.status === "draft" ? (
                         <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">
@@ -819,9 +852,6 @@ ${s.discount > 0 ? `<div class="row" style="font-size:11px"><span><b>Discount</b
                 <div className="text-right">
                   <p><span className="font-semibold text-gray-800">Date:</span> {new Date(invoiceSale.createdAt).toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" })}</p>
                   <p><span className="font-semibold text-gray-800">Payment:</span> <span className="inline-block bg-gray-100 px-2 py-0.5 rounded text-xs font-semibold">{invoiceSale.paymentType.charAt(0).toUpperCase() + invoiceSale.paymentType.slice(1)}</span></p>
-                  {invoiceSale.jobCard && (
-                    <p><span className="font-semibold text-gray-800">Mechanic:</span> {invoiceSale.jobCard.mechanicName}</p>
-                  )}
                 </div>
               </div>
               {/* ── Parts Section ── */}
@@ -977,7 +1007,6 @@ ${s.discount > 0 ? `<div class="row" style="font-size:11px"><span><b>Discount</b
                         <div><span className="text-gray-400">Vehicle:</span> {selectedJobCard.vehicleNumber}</div>
                         <div><span className="text-gray-400">Bike:</span> {selectedJobCard.bikeModel}</div>
                         <div><span className="text-gray-400">Meter:</span> {selectedJobCard.meterReading.toLocaleString()} km</div>
-                        <div><span className="text-gray-400">Mechanic:</span> {selectedJobCard.mechanicName}</div>
                         <div><span className="text-gray-400">Labor:</span> Rs {Math.round(selectedJobCard.laborCost).toLocaleString()}</div>
                       </div>
                     </div>
@@ -1018,7 +1047,7 @@ ${s.discount > 0 ? `<div class="row" style="font-size:11px"><span><b>Discount</b
                             </div>
                             <span className="text-xs text-gray-400">{jc.bikeModel}</span>
                           </div>
-                          <div className="text-xs text-gray-400 mt-0.5">{jc.vehicleNumber} · {jc.mechanicName}</div>
+                          <div className="text-xs text-gray-400 mt-0.5">{jc.vehicleNumber}</div>
                         </button>
                       ))}
                     </div>
@@ -1051,7 +1080,7 @@ ${s.discount > 0 ? `<div class="row" style="font-size:11px"><span><b>Discount</b
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">Discount (Rs)</label>
-                  <input type="number" value={discount} onChange={(e) => setDiscount(e.target.value)} className={inputCls} placeholder="0" min="0" />
+                  <IntegerInput value={discount} onChange={setDiscount} className={inputCls} placeholder="0" />
                 </div>
               </div>
             </div>
@@ -1095,22 +1124,18 @@ ${s.discount > 0 ? `<div class="row" style="font-size:11px"><span><b>Discount</b
                         <div className="text-xs text-gray-400 mt-0.5">{item.partNumber} · <span className={item.quantity >= item.stock ? "text-red-500 font-medium" : ""}>Stock: {item.stock}</span></div>
                       </td>
                       <td className="px-3 py-3 text-center">
-                        <input
-                          type="number"
+                        <IntegerInput
                           value={item.quantity}
-                          onChange={(e) => updateItemQty(item.id, parseInt(e.target.value, 10) || 1)}
+                          onChange={(v) => updateItemQty(item.id, parseInt(v, 10) || 0)}
+                          onBlur={() => clampItemQty(item.id)}
                           className="w-16 px-2 py-1.5 border border-gray-200 rounded-md text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white"
-                          min="1"
-                          max={item.stock}
                         />
                       </td>
                       <td className="px-3 py-3 text-right">
-                        <input
-                          type="number"
+                        <IntegerInput
                           value={item.unitPrice}
-                          onChange={(e) => updateItemPrice(item.id, parseFloat(e.target.value) || 0)}
+                          onChange={(v) => updateItemPrice(item.id, parseInt(v, 10) || 0)}
                           className="w-24 px-2 py-1.5 border border-gray-200 rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white"
-                          min="0"
                         />
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-gray-900">
@@ -1142,13 +1167,13 @@ ${s.discount > 0 ? `<div class="row" style="font-size:11px"><span><b>Discount</b
                 type="text"
                 value={labourSearch}
                 onChange={(e) => { setLabourSearch(e.target.value); setLabourDropdownOpen(true); setLabourHighlight(0); }}
-                onFocus={() => { if (labourSearch.trim()) setLabourDropdownOpen(true); }}
+                onFocus={() => { setLabourDropdownOpen(true); setLabourHighlight(0); }}
                 onKeyDown={handleLabourKeyDown}
                 placeholder="Type labour / service name to search & add..."
                 className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white transition-shadow"
                 autoComplete="off"
               />
-              {labourDropdownOpen && labourSearch.trim() && availableLabours.length > 0 && (
+              {labourDropdownOpen && availableLabours.length > 0 && (
                 <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
                   {availableLabours.slice(0, 20).map((l, idx) => (
                     <button
@@ -1195,21 +1220,18 @@ ${s.discount > 0 ? `<div class="row" style="font-size:11px"><span><b>Discount</b
                         <div className="font-medium text-gray-900">{item.labourName}</div>
                       </td>
                       <td className="px-3 py-3 text-center">
-                        <input
-                          type="number"
+                        <IntegerInput
                           value={item.quantity}
-                          onChange={(e) => updateLabourQty(item.id, parseInt(e.target.value, 10) || 1)}
+                          onChange={(v) => updateLabourQty(item.id, parseInt(v, 10) || 0)}
+                          onBlur={() => clampLabourQty(item.id)}
                           className="w-16 px-2 py-1.5 border border-gray-200 rounded-md text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white"
-                          min="1"
                         />
                       </td>
                       <td className="px-3 py-3 text-right">
-                        <input
-                          type="number"
+                        <IntegerInput
                           value={item.unitPrice}
-                          onChange={(e) => updateLabourPrice(item.id, parseFloat(e.target.value) || 0)}
+                          onChange={(v) => updateLabourPrice(item.id, parseInt(v, 10) || 0)}
                           className="w-24 px-2 py-1.5 border border-gray-200 rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white"
-                          min="0"
                         />
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-gray-900">
@@ -1260,13 +1282,11 @@ ${s.discount > 0 ? `<div class="row" style="font-size:11px"><span><b>Discount</b
               <div className="px-5 py-3 bg-gray-100/80 border-t border-gray-200 space-y-2">
                 <div className="flex items-center justify-between gap-4">
                   <label className="text-sm font-semibold text-gray-700 whitespace-nowrap">Cash Received (Rs)</label>
-                  <input
-                    type="number"
+                  <IntegerInput
                     value={cashReceived}
-                    onChange={(e) => setCashReceived(e.target.value)}
+                    onChange={setCashReceived}
                     placeholder="0"
                     className="w-36 px-3 py-1.5 border border-gray-200 rounded-md text-sm text-right font-medium focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white"
-                    min="0"
                   />
                 </div>
                 <div className="flex items-center justify-between">

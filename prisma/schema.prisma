@@ -1,6 +1,6 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma/client"
 }
 
 datasource db {
@@ -51,13 +51,12 @@ model Part {
   id            Int           @id @default(autoincrement())
   name          String
   partNumber    String        @unique @map("part_number")
-  category      String
   categoryId    Int?          @map("category_id")
-  categoryRel   Category?     @relation(fields: [categoryId], references: [id])
+  category      Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   subcategoryId Int?          @map("subcategory_id")
-  subcategory   Subcategory?  @relation(fields: [subcategoryId], references: [id])
-  purchasePrice Float         @map("purchase_price")
-  salePrice     Float         @map("sale_price")
+  subcategory   Subcategory?  @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
+  purchasePrice Decimal       @default(0) @map("purchase_price") @db.Decimal(12,2)
+  salePrice     Decimal       @default(0) @map("sale_price") @db.Decimal(12,2)
   stock         Int           @default(0)
   minStock      Int           @default(5) @map("min_stock")
   aliases       String[]      @default([])
@@ -69,7 +68,6 @@ model Part {
   saleItems     SaleItem[]
   serviceItems  ServiceItem[]
 
-  @@index([category])
   @@index([name])
   @@index([categoryId])
   @@map("parts")
@@ -85,8 +83,8 @@ model StockLog {
   quantity      Int
   prevStock     Int      @map("prev_stock")
   newStock      Int      @map("new_stock")
-  purchasePrice Float?   @map("purchase_price")
-  prevPrice     Float?   @map("prev_price")
+  purchasePrice Decimal? @map("purchase_price") @db.Decimal(12,2)
+  prevPrice     Decimal? @map("prev_price") @db.Decimal(12,2)
   note          String?
   createdAt     DateTime @default(now()) @map("created_at")
 
@@ -101,9 +99,9 @@ model StockLog {
 model Purchase {
   id        Int            @id @default(autoincrement())
   vendorId  Int            @map("vendor_id")
-  vendor    Vendor         @relation(fields: [vendorId], references: [id])
+  vendor    Vendor         @relation(fields: [vendorId], references: [id], onDelete: Restrict)
   status    String         @default("received") // "ordered" | "in_transit" | "received"
-  total     Float          @default(0)
+  total     Decimal        @default(0) @db.Decimal(12,2)
   note      String?
   items     PurchaseItem[]
   createdAt DateTime       @default(now()) @map("created_at")
@@ -121,9 +119,11 @@ model PurchaseItem {
   partId     Int      @map("part_id")
   part       Part     @relation(fields: [partId], references: [id], onDelete: Restrict)
   quantity   Int
-  unitPrice  Float    @map("unit_price")
-  total      Float
+  unitPrice  Decimal  @map("unit_price") @db.Decimal(12,2)
+  total      Decimal  @db.Decimal(12,2)
 
+  @@index([purchaseId])
+  @@index([partId])
   @@map("purchase_items")
 }
 
@@ -132,7 +132,7 @@ model PurchaseItem {
 model Labour {
   id           Int              @id @default(autoincrement())
   name         String
-  defaultPrice Float            @default(0) @map("default_price")
+  defaultPrice Decimal          @default(0) @map("default_price") @db.Decimal(12,2)
   notes        String?
   saleLabours  SaleLabourItem[]
   createdAt    DateTime         @default(now()) @map("created_at")
@@ -147,18 +147,19 @@ model Labour {
 model Sale {
   id          Int              @id @default(autoincrement())
   jobCardId   Int?             @map("job_card_id")
-  jobCard     JobCard?         @relation(fields: [jobCardId], references: [id])
+  jobCard     JobCard?         @relation(fields: [jobCardId], references: [id], onDelete: SetNull)
   customer    String?
   date        DateTime         @default(now())
-  laborCost   Float            @default(0) @map("labor_cost")
-  subtotal    Float            @default(0)
-  discount    Float            @default(0)
-  total       Float            @default(0)
+  laborCost   Decimal          @default(0) @map("labor_cost") @db.Decimal(12,2)
+  subtotal    Decimal          @default(0) @db.Decimal(12,2)
+  discount    Decimal          @default(0) @db.Decimal(12,2)
+  total       Decimal          @default(0) @db.Decimal(12,2)
   paymentType String           @default("cash") @map("payment_type") // "cash" | "card" | "credit"
   status      String           @default("draft") // "draft" | "final"
   finalizedAt DateTime?        @map("finalized_at")
   items       SaleItem[]
   labourItems SaleLabourItem[]
+  wbSaleLog   WheelBalancerSaleLog?
   createdAt   DateTime         @default(now()) @map("created_at")
   updatedAt   DateTime         @updatedAt @map("updated_at")
 
@@ -170,28 +171,32 @@ model Sale {
 }
 
 model SaleItem {
-  id        Int   @id @default(autoincrement())
-  saleId    Int   @map("sale_id")
-  sale      Sale  @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  partId    Int   @map("part_id")
-  part      Part  @relation(fields: [partId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  saleId    Int     @map("sale_id")
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  partId    Int     @map("part_id")
+  part      Part    @relation(fields: [partId], references: [id], onDelete: Restrict)
   quantity  Int
-  unitPrice Float @map("unit_price")
-  total     Float
+  unitPrice Decimal @map("unit_price") @db.Decimal(12,2)
+  total     Decimal @db.Decimal(12,2)
 
+  @@index([saleId])
+  @@index([partId])
   @@map("sale_items")
 }
 
 model SaleLabourItem {
-  id        Int    @id @default(autoincrement())
-  saleId    Int    @map("sale_id")
-  sale      Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  labourId  Int    @map("labour_id")
-  labour    Labour @relation(fields: [labourId], references: [id], onDelete: Restrict)
-  quantity  Int    @default(1)
-  unitPrice Float  @map("unit_price")
-  total     Float
+  id        Int     @id @default(autoincrement())
+  saleId    Int     @map("sale_id")
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  labourId  Int     @map("labour_id")
+  labour    Labour  @relation(fields: [labourId], references: [id], onDelete: Restrict)
+  quantity  Int     @default(1)
+  unitPrice Decimal @map("unit_price") @db.Decimal(12,2)
+  total     Decimal @db.Decimal(12,2)
 
+  @@index([saleId])
+  @@index([labourId])
   @@map("sale_labour_items")
 }
 
@@ -205,8 +210,8 @@ model Service {
   bikeRegNo     String?       @map("bike_reg_no")
   serviceType   String        @map("service_type")
   status        String        @default("pending") // "pending" | "in_progress" | "completed"
-  laborCost     Float         @default(0) @map("labor_cost")
-  total         Float         @default(0)
+  laborCost     Decimal       @default(0) @map("labor_cost") @db.Decimal(12,2)
+  total         Decimal       @default(0) @db.Decimal(12,2)
   note          String?
   items         ServiceItem[]
   createdAt     DateTime      @default(now()) @map("created_at")
@@ -224,9 +229,11 @@ model ServiceItem {
   partId    Int     @map("part_id")
   part      Part    @relation(fields: [partId], references: [id], onDelete: Restrict)
   quantity  Int
-  unitPrice Float   @map("unit_price")
-  total     Float
+  unitPrice Decimal @map("unit_price") @db.Decimal(12,2)
+  total     Decimal @db.Decimal(12,2)
 
+  @@index([serviceId])
+  @@index([partId])
   @@map("service_items")
 }
 
@@ -240,10 +247,11 @@ model JobCard {
   vehicleNumber  String   @map("vehicle_number")
   meterReading   Int      @map("meter_reading")
   bikeModel      String   @map("bike_model")
-  mechanicName   String   @map("mechanic_name")
-  laborCost      Float    @default(0) @map("labor_cost")
+  laborCost      Decimal  @default(0) @map("labor_cost") @db.Decimal(12,2)
   status         String   @default("open") // "open" | "completed"
   sales          Sale[]
+  staffAssignments JobCardStaff[]
+  bonusLogs      StaffBonusLog[]
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
@@ -252,4 +260,220 @@ model JobCard {
   @@index([vehicleNumber])
   @@index([status])
   @@map("job_cards")
+}
+
+// ─── Staff ───────────────────────────────────────
+
+model Staff {
+  id         Int      @id @default(autoincrement())
+  name       String
+  role       String   // "job_card_person" | "mechanic" | "store_keeper" | "admin" | "wheel_balancer"
+  contact    String?
+  status     String   @default("active") // "active" | "inactive"
+  baseSalary Decimal  @default(0) @map("base_salary") @db.Decimal(12,2)
+  jobCardAssignments JobCardStaff[]
+  bonusConfig  StaffBonusConfig?
+  bonusLogs    StaffBonusLog[]
+  wbConfig     WheelBalancerConfig?
+  wbPerformance WheelBalancerPerformance[]
+  wbSaleLogs   WheelBalancerSaleLog[]
+  attendance   StaffAttendance[]
+  advances     StaffAdvance[]
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([role])
+  @@index([status])
+  @@index([name])
+  @@map("staff")
+}
+
+// ─── Job Card Staff Assignments ──────────────────
+
+model JobCardStaff {
+  id         Int      @id @default(autoincrement())
+  jobCardId  Int      @map("job_card_id")
+  jobCard    JobCard  @relation(fields: [jobCardId], references: [id], onDelete: Cascade)
+  staffId    Int      @map("staff_id")
+  staff      Staff    @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  labourType String?  @map("labour_type")
+  hoursSpent Decimal? @map("hours_spent") @db.Decimal(6,2)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([jobCardId, staffId])
+  @@index([jobCardId])
+  @@index([staffId])
+  @@map("jobcard_staff")
+}
+
+// ─── Staff Bonus Configuration ───────────────────
+
+model StaffBonusConfig {
+  id              Int      @id @default(autoincrement())
+  staffId         Int      @unique @map("staff_id")
+  staff           Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  minJobcardAmount Decimal @map("min_jobcard_amount") @db.Decimal(12,2)
+  bonusType       String   @map("bonus_type") // "flat" | "percentage"
+  bonusValue      Decimal  @map("bonus_value") @db.Decimal(12,2)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("staff_bonus_config")
+}
+
+// ─── Staff Bonus Log ─────────────────────────────
+
+model StaffBonusLog {
+  id            Int      @id @default(autoincrement())
+  staffId       Int      @map("staff_id")
+  staff         Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  jobCardId     Int      @map("job_card_id")
+  jobCard       JobCard  @relation(fields: [jobCardId], references: [id], onDelete: Cascade)
+  jobCardAmount Decimal  @map("job_card_amount") @db.Decimal(12,2)
+  bonusAmount   Decimal  @map("bonus_amount") @db.Decimal(12,2)
+  bonusType     String   @map("bonus_type") // "flat" | "percentage"
+  bonusValue    Decimal  @map("bonus_value") @db.Decimal(12,2)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([staffId, jobCardId])
+  @@index([staffId])
+  @@index([jobCardId])
+  @@index([createdAt])
+  @@map("staff_bonus_log")
+}
+
+// ─── Wheel Balancer System ───────────────────────
+
+model WheelBalancerConfig {
+  id              Int      @id @default(autoincrement())
+  staffId         Int      @unique @map("staff_id")
+  staff           Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  bonusThreshold  Int      @default(100) @map("bonus_threshold")
+  bonusType       String   @default("flat") @map("bonus_type") // "flat" | "percentage"
+  bonusValue      Decimal  @default(0) @map("bonus_value") @db.Decimal(12,2)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("wheel_balancer_config")
+}
+
+model WheelBalancerPerformance {
+  id              Int      @id @default(autoincrement())
+  staffId         Int      @map("staff_id")
+  staff           Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  month           String   // "2026-03" format
+  serviceCount    Int      @default(0) @map("service_count")
+  totalEarnings   Decimal  @default(0) @map("total_earnings") @db.Decimal(12,2)
+  bonusAmount     Decimal  @default(0) @map("bonus_amount") @db.Decimal(12,2)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([staffId, month])
+  @@index([staffId])
+  @@index([month])
+  @@map("wheel_balancer_performance")
+}
+
+model WheelBalancerSaleLog {
+  id        Int      @id @default(autoincrement())
+  saleId    Int      @unique @map("sale_id")
+  sale      Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  staffId   Int      @map("staff_id")
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  amount    Decimal  @db.Decimal(12,2)
+  count     Int      @default(1)
+  month     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([staffId])
+  @@index([month])
+  @@map("wheel_balancer_sale_log")
+}
+
+// ─── Daily Cash Report ───────────────────────────
+
+model DailyCashReport {
+  id                Int      @id @default(autoincrement())
+  date              DateTime @unique @db.Date
+  advanceSalary     Decimal  @default(0) @map("advance_salary") @db.Decimal(12,2)
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([date])
+  @@map("daily_cash_reports")
+}
+
+// ─── Staff Attendance ─────────────────────────────
+
+model StaffAttendance {
+  id        Int      @id @default(autoincrement())
+  staffId   Int      @map("staff_id")
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  date      DateTime @db.Date
+  status    String   // "present" | "absent"
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([staffId, date])
+  @@index([staffId])
+  @@index([date])
+  @@map("staff_attendance")
+}
+
+// ─── Staff Advance ───────────────────────────────
+
+model StaffAdvance {
+  id        Int      @id @default(autoincrement())
+  staffId   Int      @map("staff_id")
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  amount    Decimal  @db.Decimal(12,2)
+  date      DateTime @db.Date
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([staffId])
+  @@index([date])
+  @@map("staff_advances")
+}
+
+// ─── Salary Lock ─────────────────────────────────
+
+model SalaryLock {
+  id        Int      @id @default(autoincrement())
+  month     String   @unique // "2026-03" format
+  lockedAt  DateTime @default(now()) @map("locked_at")
+
+  @@map("salary_locks")
+}
+
+// ─── Expenses ────────────────────────────────────
+
+model Expense {
+  id        Int      @id @default(autoincrement())
+  amount    Decimal  @db.Decimal(12,2)
+  type      String   // "food" | "utility" | "misc"
+  note      String?
+  date      DateTime @db.Date
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([date])
+  @@index([type])
+  @@map("expenses")
+}
+
+// ─── Admin Users ─────────────────────────────────
+
+model AdminUser {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String   // bcrypt hash
+  name      String
+  role      String   @default("ADMIN") // "ADMIN"
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("admin_users")
 }

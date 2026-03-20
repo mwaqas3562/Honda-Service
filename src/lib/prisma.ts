@@ -1,5 +1,11 @@
-import { PrismaClient } from "@/generated/prisma/client";
+import { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+
+// Ensure Prisma Decimal values serialize as numbers in JSON responses
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(Prisma.Decimal.prototype as any).toJSON = function () {
+  return Number(this);
+};
 
 function createPrismaClient() {
   const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });

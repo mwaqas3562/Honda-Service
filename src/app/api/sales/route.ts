@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { n } from "@/lib/utils";
+
 
 // GET /api/sales — list sales with optional filters
 export async function GET(req: NextRequest) {
@@ -38,16 +40,25 @@ export async function GET(req: NextRequest) {
       ];
     }
 
-    const sales = await prisma.sale.findMany({
-      where,
-      include: {
-        items: { include: { part: true } },
-        labourItems: { include: { labour: true } },
-        jobCard: true,
-      },
-      orderBy: { createdAt: "desc" },
-    });
-    return NextResponse.json(sales);
+    const page = Math.max(parseInt(searchParams.get("page") || "1") || 1, 1);
+    const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "100") || 100, 1), 500);
+    const skip = (page - 1) * limit;
+
+    const [sales, total] = await Promise.all([
+      prisma.sale.findMany({
+        where,
+        include: {
+          items: { include: { part: true } },
+          labourItems: { include: { labour: true } },
+          jobCard: true,
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.sale.count({ where }),
+    ]);
+    return NextResponse.json({ data: sales, total, page, limit });
   } catch (error) {
     console.error("GET /api/sales error:", error);
     return NextResponse.json({ error: "Failed to fetch sales" }, { status: 500 });
@@ -77,36 +88,31 @@ export async function POST(req: NextRequest) {
       if (item.unitPrice == null || item.unitPrice < 0) return NextResponse.json({ error: `Item ${i + 1}: Price must be non-negative` }, { status: 400 });
     }
 
-    // Validate stock availability upfront before creating sale
-    for (let i = 0; i < (items || []).length; i++) {
-      const item = items[i];
-      const part = await prisma.part.findUnique({ where: { id: item.partId } });
-      if (!part) return NextResponse.json({ error: `Item ${i + 1}: Part not found` }, { status: 400 });
-      if (part.stock < item.quantity) {
-        return NextResponse.json(
-          { error: `Item ${i + 1} (${part.name}): Insufficient stock. Available: ${part.stock}, Requested: ${item.quantity}` },
-          { status: 400 }
-        );
-      }
-    }
+    const saleItems = (items || []).map((item: { partId: number; quantity: number; unitPrice: number }) => {
+      const qty = Math.max(1, Math.round(item.quantity));
+      const price = Math.max(0, item.unitPrice);
+      return {
+        partId: item.partId,
+        quantity: qty,
+        unitPrice: price,
+        total: Math.round(qty * price * 100) / 100,
+      };
+    });
 
-    const saleItems = (items || []).map((item: { partId: number; quantity: number; unitPrice: number }) => ({
-      partId: item.partId,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      total: Math.round(item.quantity * item.unitPrice * 100) / 100,
-    }));
-
-    const saleLabourItems = (labourItems || []).map((item: { labourId: number; quantity: number; unitPrice: number }) => ({
-      labourId: item.labourId,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      total: Math.round(item.quantity * item.unitPrice * 100) / 100,
-    }));
+    const saleLabourItems = (labourItems || []).map((item: { labourId: number; quantity: number; unitPrice: number }) => {
+      const qty = Math.max(1, Math.round(item.quantity));
+      const price = Math.max(0, item.unitPrice);
+      return {
+        labourId: item.labourId,
+        quantity: qty,
+        unitPrice: price,
+        total: Math.round(qty * price * 100) / 100,
+      };
+    });
 
     const partsSubtotal = saleItems.reduce((sum: number, i: { total: number }) => sum + i.total, 0);
     const labourSubtotal = saleLabourItems.reduce((sum: number, i: { total: number }) => sum + i.total, 0);
-    const labor = labourSubtotal > 0 ? labourSubtotal : Math.max(0, Number(laborCost) || (jobCard?.laborCost ?? 0));
+    const labor = labourSubtotal > 0 ? labourSubtotal : Math.max(0, Number(laborCost) || n(jobCard?.laborCost));
     const subtotal = Math.round((partsSubtotal + labor) * 100) / 100;
     const disc = Math.min(Math.max(0, Number(discount) || 0), subtotal);
     const total = Math.round((subtotal - disc) * 100) / 100;

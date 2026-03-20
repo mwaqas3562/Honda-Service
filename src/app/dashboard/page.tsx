@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Package, ShoppingCart, Wrench, DollarSign, AlertTriangle, TrendingUp, CalendarDays, FileText, Truck, ClipboardList, Lock, RefreshCw } from "lucide-react";
+import { Package, ShoppingCart, Wrench, DollarSign, TrendingUp, CalendarDays, FileText, Truck, ClipboardList, Lock, RefreshCw } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
+import { fmtRs } from "@/lib/utils";
 
 interface RecentSale {
   id: number;
@@ -52,20 +53,17 @@ interface DashboardStats {
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [lowStock, setLowStock] = useState<{ name: string; stock: number; minStock: number }[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/dashboard/stats").then((r) => r.json()),
-      fetch("/api/parts/low-stock").then((r) => r.json()),
-    ])
-      .then(([s, ls]) => { setStats(s); setLowStock(ls); })
+    fetch("/api/dashboard/stats")
+      .then((r) => r.json())
+      .then((s) => setStats(s))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
-  const fmtRs = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
+
   const todayStr = new Date().toLocaleDateString("en-PK", { weekday: "long", day: "2-digit", month: "short", year: "numeric" });
 
   const statusColor: Record<string, string> = {
@@ -216,28 +214,6 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
-
-      {/* ═══ LOW STOCK ALERT ═══ */}
-      {lowStock.length > 0 && (
-        <div className="mb-8 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="text-sm font-semibold text-amber-800">
-              Low Stock Alert — {lowStock.length} item{lowStock.length > 1 ? "s" : ""} below minimum
-            </p>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {lowStock.slice(0, 8).map((p, i) => (
-                <span key={i} className="text-xs bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full font-medium">
-                  {p.name} <span className="text-amber-600">({p.stock}/{p.minStock})</span>
-                </span>
-              ))}
-              {lowStock.length > 8 && (
-                <span className="text-xs text-amber-700 font-medium self-center">+{lowStock.length - 8} more</span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ═══ RECENT SALES TABLE + RECENT SERVICES ═══ */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { updateWheelBalancerTracking, reverseWheelBalancerTracking } from "@/lib/wheel-balancer";
+import { calculateJobCardBonuses } from "@/lib/bonus";
+import { n } from "@/lib/utils";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -52,46 +55,52 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       if (item.unitPrice == null || item.unitPrice < 0) return NextResponse.json({ error: `Item ${i + 1}: Price must be non-negative` }, { status: 400 });
     }
 
-    for (let i = 0; i < (items || []).length; i++) {
-      const part = await prisma.part.findUnique({ where: { id: items[i].partId } });
-      if (!part) return NextResponse.json({ error: `Item ${i + 1}: Part not found` }, { status: 400 });
-      if (part.stock < items[i].quantity) {
-        return NextResponse.json(
-          { error: `Item ${i + 1} (${part.name}): Insufficient stock. Available: ${part.stock}, Requested: ${items[i].quantity}` },
-          { status: 400 }
-        );
-      }
-    }
-
     let jobCard = null;
     if (jobCardId) {
       jobCard = await prisma.jobCard.findUnique({ where: { id: jobCardId } });
       if (!jobCard) return NextResponse.json({ error: "Job card not found" }, { status: 400 });
     }
 
-    const saleItems = (items || []).map((item: { partId: number; quantity: number; unitPrice: number }) => ({
-      partId: item.partId,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      total: Math.round(item.quantity * item.unitPrice * 100) / 100,
-    }));
+    const saleItems = (items || []).map((item: { partId: number; quantity: number; unitPrice: number }) => {
+      const qty = Math.max(1, Math.round(item.quantity));
+      const price = Math.max(0, item.unitPrice);
+      return {
+        partId: item.partId,
+        quantity: qty,
+        unitPrice: price,
+        total: Math.round(qty * price * 100) / 100,
+      };
+    });
 
-    const saleLabourItems = (labourItems || []).map((item: { labourId: number; quantity: number; unitPrice: number }) => ({
-      labourId: item.labourId,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      total: Math.round(item.quantity * item.unitPrice * 100) / 100,
-    }));
+    const saleLabourItems = (labourItems || []).map((item: { labourId: number; quantity: number; unitPrice: number }) => {
+      const qty = Math.max(1, Math.round(item.quantity));
+      const price = Math.max(0, item.unitPrice);
+      return {
+        labourId: item.labourId,
+        quantity: qty,
+        unitPrice: price,
+        total: Math.round(qty * price * 100) / 100,
+      };
+    });
 
     const partsSubtotal = saleItems.reduce((sum: number, i: { total: number }) => sum + i.total, 0);
     const labourSubtotal = saleLabourItems.reduce((sum: number, i: { total: number }) => sum + i.total, 0);
-    const labor = labourSubtotal > 0 ? labourSubtotal : Math.max(0, Number(laborCost) || (jobCard?.laborCost ?? 0));
+    const labor = labourSubtotal > 0 ? labourSubtotal : Math.max(0, Number(laborCost) || n(jobCard?.laborCost));
     const subtotal = Math.round((partsSubtotal + labor) * 100) / 100;
     const disc = Math.min(Math.max(0, Number(discount) || 0), subtotal);
     const total = Math.round((subtotal - disc) * 100) / 100;
     const customerName = customer?.trim() || (jobCard?.customerName ?? null);
 
     const updated = await prisma.$transaction(async (tx) => {
+      // Re-validate stock inside transaction to prevent race conditions
+      for (let i = 0; i < saleItems.length; i++) {
+        const part = await tx.part.findUnique({ where: { id: saleItems[i].partId } });
+        if (!part) throw new Error(`Item ${i + 1}: Part not found`);
+        if (part.stock < saleItems[i].quantity) {
+          throw new Error(`Item ${i + 1} (${part.name}): Insufficient stock. Available: ${part.stock}, Requested: ${saleItems[i].quantity}`);
+        }
+      }
+
       await tx.saleItem.deleteMany({ where: { saleId } });
       await tx.saleLabourItem.deleteMany({ where: { saleId } });
       return tx.sale.update({
@@ -172,9 +181,10 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         });
       }
 
-      // 3. Mark job card as completed if linked
+      // 3. Mark job card as completed if linked & calculate bonuses
       if (sale.jobCardId) {
         await tx.jobCard.update({ where: { id: sale.jobCardId }, data: { status: "completed" } });
+        await calculateJobCardBonuses(sale.jobCardId, tx);
       }
 
       // 4. Lock sale as final
@@ -185,6 +195,9 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       });
     });
 
+    // Track wheel balancer earnings after finalization
+    updateWheelBalancerTracking(saleId).catch((e) => console.error("WB tracking error:", e));
+
     return NextResponse.json(finalized);
   } catch (error) {
     console.error("PATCH /api/sales/:id error:", error);
@@ -193,7 +206,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   }
 }
 
-// DELETE /api/sales/:id — delete a draft sale only
+// DELETE /api/sales/:id — delete a draft sale only (atomic with WB tracking reversal)
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
   try {
     const { id } = await params;
@@ -204,7 +217,13 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
     if (!sale) return NextResponse.json({ error: "Sale not found" }, { status: 404 });
     if (sale.status === "final") return NextResponse.json({ error: "Cannot delete a finalized invoice" }, { status: 403 });
 
-    await prisma.sale.delete({ where: { id: saleId } });
+    await prisma.$transaction(async (tx) => {
+      // Reverse wheel balancer tracking inside transaction
+      await reverseWheelBalancerTracking(saleId, tx);
+      // Delete sale (cascades to items via onDelete: Cascade)
+      await tx.sale.delete({ where: { id: saleId } });
+    });
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("DELETE /api/sales/:id error:", error);

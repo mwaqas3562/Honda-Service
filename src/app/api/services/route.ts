@@ -1,16 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+import { round2 } from "@/lib/utils";
 
 // GET /api/services
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const services = await prisma.service.findMany({
-      include: { items: { include: { part: true } } },
-      orderBy: { createdAt: "desc" },
-    });
-    return NextResponse.json(services);
+    const { searchParams } = new URL(req.url);
+    const page = Math.max(parseInt(searchParams.get("page") || "1") || 1, 1);
+    const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "100") || 100, 1), 500);
+    const skip = (page - 1) * limit;
+
+    const [services, total] = await Promise.all([
+      prisma.service.findMany({
+        include: { items: { include: { part: true } } },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.service.count(),
+    ]);
+    return NextResponse.json({ data: services, total, page, limit });
   } catch (error) {
     console.error("GET /api/services error:", error);
     return NextResponse.json({ error: "Failed to fetch services" }, { status: 500 });
@@ -28,13 +38,14 @@ export async function POST(req: NextRequest) {
 
     const serviceItems = (items || []).map((item: { partId: number; quantity: number; unitPrice: number }) => ({
       partId: item.partId,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      total: round2(item.quantity * item.unitPrice),
+      quantity: Math.max(1, Math.round(item.quantity)),
+      unitPrice: Math.max(0, item.unitPrice),
+      total: round2(Math.max(1, Math.round(item.quantity)) * Math.max(0, item.unitPrice)),
     }));
 
     const partsTotal = serviceItems.reduce((sum: number, i: { total: number }) => sum + i.total, 0);
-    const total = partsTotal + (laborCost || 0);
+    const safeLaborCost = Math.max(0, Number(laborCost) || 0);
+    const total = partsTotal + safeLaborCost;
 
     // Single transaction: create service + validate & deduct stock
     const service = await prisma.$transaction(async (tx) => {
@@ -56,7 +67,7 @@ export async function POST(req: NextRequest) {
           bikeRegNo: bikeRegNo?.trim() || null,
           serviceType: serviceType.trim(),
           status: "pending",
-          laborCost: laborCost || 0,
+          laborCost: safeLaborCost,
           total: round2(total),
           note: note?.trim() || null,
           items: serviceItems.length > 0 ? { create: serviceItems } : undefined,

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { round2, n } from "@/lib/utils";
 
 interface BulkItem {
+  partId?: number;
   name: string;
   partNumber: string;
   category: string;
@@ -24,9 +26,6 @@ interface SummaryRow {
   newAvgPrice: number;
 }
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
 
 /**
  * POST /api/parts/bulk-stock-entry
@@ -58,13 +57,13 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
-      if (!item.partNumber?.trim()) {
+      if (!item.partNumber?.trim() && !item.partId) {
         return NextResponse.json(
-          { error: `Item ${i + 1}: Part number is required` },
+          { error: `Item ${i + 1}: Part number or Part ID is required` },
           { status: 400 }
         );
       }
-      if (!item.category?.trim()) {
+      if (!item.category?.trim() && !item.partId) {
         return NextResponse.json(
           { error: `Item ${i + 1}: Category is required` },
           { status: 400 }
@@ -84,10 +83,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Merge duplicates by partNumber (case-insensitive)
+    // Merge duplicates by partId or partNumber (case-insensitive)
     const merged = new Map<string, BulkItem>();
     for (const item of items) {
-      const key = item.partNumber.trim().toLowerCase();
+      const key = item.partId
+        ? `id:${item.partId}`
+        : item.partNumber.trim().toLowerCase();
       const existing = merged.get(key);
       if (existing) {
         // Weighted average price for merged quantities
@@ -117,14 +118,16 @@ export async function POST(req: NextRequest) {
     await prisma.$transaction(async (tx) => {
       for (const item of mergedItems) {
         const partNumber = item.partNumber.trim();
-        const existingPart = await tx.part.findUnique({
-          where: { partNumber },
-        });
+
+        // Look up by partId first (name-search flow), then by partNumber
+        const existingPart = item.partId
+          ? await tx.part.findUnique({ where: { id: item.partId }, include: { category: true } })
+          : await tx.part.findUnique({ where: { partNumber }, include: { category: true } });
 
         if (existingPart) {
           // Update existing part with weighted average
           const oldQty = existingPart.stock;
-          const oldPrice = existingPart.purchasePrice;
+          const oldPrice = n(existingPart.purchasePrice);
           const newQty = oldQty + item.quantity;
           const newAvgPrice = round2(
             ((oldQty * oldPrice) + (item.quantity * item.purchasePrice)) /
@@ -157,7 +160,7 @@ export async function POST(req: NextRequest) {
           summary.push({
             partName: existingPart.name,
             partNumber,
-            category: existingPart.category,
+            category: existingPart.category?.name || "Uncategorized",
             action: "updated",
             oldQuantity: oldQty,
             addedQuantity: item.quantity,
@@ -166,12 +169,18 @@ export async function POST(req: NextRequest) {
             newAvgPrice,
           });
         } else {
+          // Resolve category name → id
+          const cat = await tx.category.upsert({
+            where: { name: item.category.trim() },
+            update: {},
+            create: { name: item.category.trim() },
+          });
           // Create new part
           const part = await tx.part.create({
             data: {
               name: item.name.trim(),
               partNumber,
-              category: item.category.trim(),
+              categoryId: cat.id,
               purchasePrice: round2(item.purchasePrice),
               salePrice: round2(item.salePrice ?? 0),
               stock: item.quantity,

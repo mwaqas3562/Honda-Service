@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     const labour = await prisma.labour.create({
       data: {
         name: name.trim(),
-        defaultPrice: Number(defaultPrice),
+        defaultPrice: Math.round(Number(defaultPrice)),
         notes: notes?.trim() || null,
       },
     });

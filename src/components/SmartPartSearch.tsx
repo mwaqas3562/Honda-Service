@@ -63,54 +63,67 @@ export default function SmartPartSearch({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Available parts = in-stock and not excluded
+  // Top 10 most-used parts (default when no query)
   const available = useMemo(() => {
     return parts.filter((p) => p.stock > 0 && !(excludeIds?.has(p.id)));
   }, [parts, excludeIds]);
-
-  // Top 10 most-used parts (default when no query)
   const topParts = useMemo(() => {
     return [...available].sort((a, b) => b.usageCount - a.usageCount).slice(0, 10);
   }, [available]);
 
-  // Fuse index — rebuilt when available parts change
-  const fuse = useMemo(() => {
-    return new Fuse(available, {
-      keys: [
-        { name: "name", weight: 0.5 },
-        { name: "aliases", weight: 0.35 },
-        { name: "partNumber", weight: 0.15 },
-      ],
-      threshold: 0.4,
-      distance: 100,
-      includeScore: true,
-      includeMatches: true,
-      minMatchCharLength: 1,
-    });
-  }, [available]);
+  // Remote search results from backend
+  const [remoteParts, setRemoteParts] = useState<SearchablePart[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState("");
 
-  // Search results — sorted by score then usageCount
-  const results: FResult[] = useMemo(() => {
-    if (!query.trim()) return [];
-    const raw = fuse.search(query, { limit: 30 });
-    // Stable sort: close scores grouped, then by usageCount
-    return raw.sort((a, b) => {
-      const scoreDiff = (a.score || 0) - (b.score || 0);
-      if (Math.abs(scoreDiff) > 0.05) return scoreDiff;
-      return (b.item.usageCount || 0) - (a.item.usageCount || 0);
-    }).slice(0, 20);
-  }, [fuse, query]);
+  // Debounced search query
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    if (!debouncedQuery.trim()) {
+      setRemoteParts([]);
+      setRemoteLoading(false);
+      setRemoteError("");
+      return;
+    }
+    setRemoteLoading(true);
+    setRemoteError("");
+    const controller = new AbortController();
+    fetch(`/api/parts?search=${encodeURIComponent(debouncedQuery.trim())}`, { signal: controller.signal })
+      .then(res => res.ok ? res.json() : Promise.reject(res))
+      .then(data => {
+        setRemoteParts(Array.isArray(data) ? data : data.data ?? []);
+        setRemoteLoading(false);
+      })
+      .catch(err => {
+        if (err.name !== "AbortError") setRemoteError("Failed to fetch parts");
+        setRemoteLoading(false);
+      });
+    return () => controller.abort();
+  }, [debouncedQuery]);
 
   // What to show in dropdown
   const displayItems: FResult[] = useMemo(() => {
     if (query.trim()) {
-      return results;
+      if (remoteLoading) return [];
+      if (remoteParts.length > 0) {
+        return remoteParts
+          .filter((p) => p.stock > 0 && !(excludeIds?.has(p.id)))
+          .sort((a, b) => (b.usageCount || 0) - (a.usageCount || 0))
+          .slice(0, 20)
+          .map((item) => ({ item, score: undefined, matches: undefined, refIndex: 0 }));
+      }
+      return [];
     }
     // No query → show top used as pseudo-results (no match highlighting)
     return topParts.map((item) => ({ item, score: undefined, matches: undefined, refIndex: 0 }));
-  }, [query, results, topParts]);
+  }, [query, remoteParts, remoteLoading, topParts, excludeIds]);
 
-  const noResults = query.trim().length > 0 && results.length === 0;
+  const noResults = query.trim().length > 0 && !remoteLoading && displayItems.length === 0;
 
   // Close on outside click
   useEffect(() => {
@@ -135,7 +148,6 @@ export default function SmartPartSearch({
     setQuery("");
     setIsOpen(false);
     setHighlight(0);
-    setTimeout(() => inputRef.current?.focus(), 0);
   }, [onSelect]);
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -195,7 +207,8 @@ export default function SmartPartSearch({
           setIsOpen(true);
           setHighlight(0);
         }}
-        onFocus={() => setIsOpen(true)}
+        onFocus={() => { if (query.trim()) setIsOpen(true); }}
+        onClick={() => setIsOpen(true)}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         autoFocus={autoFocus}

@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Plus, Trash2, Upload } from "lucide-react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { Plus, Trash2, Upload, Search, Package } from "lucide-react";
 import { Part } from "@/components/PartRow";
+import IntegerInput from "@/components/IntegerInput";
+import Fuse, { type FuseResult as FuseResultType } from "fuse.js";
 
 /* ── Types ────────────────────────────────────────── */
 
@@ -26,34 +28,216 @@ interface AddStockFormProps {
 
 interface BulkRow {
   id: number;
-  name: string;
+  partId: number | null;
+  partName: string;
   partNumber: string;
   category: string;
+  stock: number;
+  purchasePrice: number;
   quantity: string;
-  purchasePrice: string;
-  salePrice: string;
+  unitPrice: string;
 }
 
-const CATEGORIES = [
-  "Engine",
-  "Brakes",
-  "Transmission",
-  "Electrical",
-  "Body Parts",
-  "Filters",
-  "Ignition",
-  "Suspension",
-  "Exhaust",
-  "Oils & Lubricants",
-  "Other",
-];
+type FResult = FuseResultType<Part>;
 
 let rowIdCounter = 1;
 function nextRowId() {
   return rowIdCounter++;
 }
 
-/* ── Component ────────────────────────────────────── */
+/* ── Inline Part Search Dropdown ──────────────────── */
+
+function PartSearchInput({
+  parts,
+  fuse,
+  value,
+  selectedPart,
+  onSelect,
+  onClear,
+  placeholder,
+  autoFocus,
+}: {
+  parts: Part[];
+  fuse: Fuse<Part>;
+  value: string;
+  selectedPart: Part | null;
+  onSelect: (part: Part) => void;
+  onClear: () => void;
+  placeholder?: string;
+  autoFocus?: boolean;
+}) {
+  const [query, setQuery] = useState(value);
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Top parts by usage
+  const topParts = useMemo(
+    () => [...parts].sort((a, b) => (b.usageCount || 0) - (a.usageCount || 0)).slice(0, 10),
+    [parts]
+  );
+
+  const results: FResult[] = useMemo(() => {
+    if (!query.trim()) return [];
+    return fuse.search(query, { limit: 20 }).sort((a, b) => {
+      const sd = (a.score || 0) - (b.score || 0);
+      if (Math.abs(sd) > 0.05) return sd;
+      return (b.item.usageCount || 0) - (a.item.usageCount || 0);
+    });
+  }, [fuse, query]);
+
+  const displayItems: FResult[] = useMemo(() => {
+    if (query.trim()) return results;
+    return topParts.map((item) => ({ item, score: undefined, matches: undefined, refIndex: 0 }));
+  }, [query, results, topParts]);
+
+  // Reset query when parent value changes (e.g. clear)
+  useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
+  // Close on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen || !dropdownRef.current) return;
+    const el = dropdownRef.current.children[highlight] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: "nearest" });
+  }, [highlight, isOpen]);
+
+  const handleSelect = useCallback(
+    (part: Part) => {
+      onSelect(part);
+      setQuery(part.name);
+      setIsOpen(false);
+      setHighlight(0);
+    },
+    [onSelect]
+  );
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (!isOpen || displayItems.length === 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setIsOpen(true);
+      }
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlight((h) => Math.min(h + 1, displayItems.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      handleSelect(displayItems[highlight].item);
+    } else if (e.key === "Escape") {
+      setIsOpen(false);
+    }
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+      <input
+        ref={inputRef}
+        type="text"
+        value={selectedPart ? selectedPart.name : query}
+        onChange={(e) => {
+          if (selectedPart) onClear();
+          setQuery(e.target.value);
+          setIsOpen(true);
+          setHighlight(0);
+        }}
+        onFocus={() => {
+          if (!selectedPart) setIsOpen(true);
+        }}
+        onClick={() => {
+          if (selectedPart) {
+            onClear();
+            setQuery("");
+            setIsOpen(true);
+          }
+        }}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder || "Search part by name..."}
+        autoFocus={autoFocus}
+        className={`w-full pl-8 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-shadow ${
+          selectedPart ? "border-green-300 bg-green-50" : "border-gray-200 bg-white"
+        }`}
+        autoComplete="off"
+      />
+      {selectedPart && (
+        <button
+          type="button"
+          onClick={() => {
+            onClear();
+            setQuery("");
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 text-xs"
+        >
+          ✕
+        </button>
+      )}
+
+      {isOpen && !selectedPart && (displayItems.length > 0 || (query.trim() && results.length === 0)) && (
+        <div
+          ref={dropdownRef}
+          className="absolute z-50 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto"
+        >
+          {!query.trim() && displayItems.length > 0 && (
+            <div className="px-3 py-1.5 text-[10px] font-medium text-gray-400 bg-gray-50 border-b border-gray-100 flex items-center gap-1">
+              <Package className="w-3 h-3" /> Most Used
+            </div>
+          )}
+          {query.trim() && results.length === 0 && (
+            <div className="px-3 py-4 text-xs text-center text-gray-400">
+              No part found for &ldquo;{query}&rdquo;
+            </div>
+          )}
+          {displayItems.map((result, idx) => {
+            const p = result.item;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => handleSelect(p)}
+                className={`w-full text-left px-3 py-2 text-sm border-b border-gray-50 last:border-0 flex justify-between items-center transition-colors ${
+                  idx === highlight ? "bg-red-50" : "hover:bg-gray-50"
+                }`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-gray-900 truncate text-xs">{p.name}</div>
+                  <div className="text-[10px] text-gray-400">{p.partNumber}</div>
+                </div>
+                <div className="text-right ml-3 shrink-0">
+                  <div className="text-xs font-bold text-gray-700">Rs {Math.round(p.purchasePrice).toLocaleString()}</div>
+                  <div className={`text-[10px] ${p.stock <= 3 ? "text-red-500 font-medium" : "text-gray-400"}`}>
+                    Stock: {p.stock}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Main Component ───────────────────────────────── */
 
 export default function AddStockForm({
   parts,
@@ -64,77 +248,99 @@ export default function AddStockForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  /* ── Fuse index ── */
+  const fuse = useMemo(() => {
+    return new Fuse(parts, {
+      keys: [
+        { name: "name", weight: 0.5 },
+        { name: "aliases", weight: 0.35 },
+        { name: "partNumber", weight: 0.15 },
+      ],
+      threshold: 0.4,
+      distance: 100,
+      includeScore: true,
+      includeMatches: true,
+      minMatchCharLength: 1,
+    });
+  }, [parts]);
+
   /* ── Single-item state ── */
-  const [partNumber, setPartNumber] = useState("");
+  const [selectedPart, setSelectedPart] = useState<Part | null>(null);
+  const [searchValue, setSearchValue] = useState("");
   const [quantity, setQuantity] = useState("");
   const [purchasePrice, setPurchasePrice] = useState("");
   const [note, setNote] = useState("");
 
-  // New-part fields (shown when part doesn't exist)
-  const [isNewPart, setIsNewPart] = useState(false);
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState("");
-  const [salePrice, setSalePrice] = useState("");
-  const [minStock, setMinStock] = useState("5");
-
-  const [matchedPart, setMatchedPart] = useState<Part | null>(null);
   const [preview, setPreview] = useState<{ newStock: number; newAvgPrice: number } | null>(null);
+
+  // Auto-fill price when part selected
+  useEffect(() => {
+    if (selectedPart && !purchasePrice) {
+      setPurchasePrice(String(Math.round(selectedPart.purchasePrice)));
+    }
+  }, [selectedPart, purchasePrice]);
+
+  // Live preview
+  useEffect(() => {
+    const qty = Number(quantity);
+    const price = Number(purchasePrice);
+    if (!selectedPart || qty <= 0 || price < 0) {
+      setPreview(null);
+      return;
+    }
+    const oldQty = selectedPart.stock;
+    const oldPrice = selectedPart.purchasePrice;
+    const newStock = oldQty + qty;
+    const newAvgPrice = Math.round(((oldQty * oldPrice + qty * price) / newStock) * 100) / 100;
+    setPreview({ newStock, newAvgPrice });
+  }, [selectedPart, quantity, purchasePrice]);
 
   /* ── Bulk state ── */
   const emptyRow = (): BulkRow => ({
     id: nextRowId(),
-    name: "",
+    partId: null,
+    partName: "",
     partNumber: "",
     category: "",
+    stock: 0,
+    purchasePrice: 0,
     quantity: "",
-    purchasePrice: "",
-    salePrice: "",
+    unitPrice: "",
   });
-  const [rows, setRows] = useState<BulkRow[]>([emptyRow(), emptyRow()]);
+  const [rows, setRows] = useState<BulkRow[]>([emptyRow(), emptyRow(), emptyRow()]);
 
-  /* ── Single-item lookups ── */
-  useEffect(() => {
-    const trimmed = partNumber.trim();
-    if (!trimmed) {
-      setMatchedPart(null);
-      setIsNewPart(false);
-      setPreview(null);
-      return;
-    }
-    const found = parts.find(
-      (p) => p.partNumber.toLowerCase() === trimmed.toLowerCase()
-    );
-    if (found) {
-      setMatchedPart(found);
-      setIsNewPart(false);
-    } else {
-      setMatchedPart(null);
-      setIsNewPart(true);
-    }
-  }, [partNumber, parts]);
-
-  useEffect(() => {
-    const qty = Number(quantity);
-    const price = Number(purchasePrice);
-    if (!matchedPart || qty <= 0 || price < 0) {
-      setPreview(null);
-      return;
-    }
-    const oldQty = matchedPart.stock;
-    const oldPrice = matchedPart.purchasePrice;
-    const newStock = oldQty + qty;
-    const newAvgPrice =
-      Math.round(
-        ((oldQty * oldPrice + qty * price) / newStock) * 100
-      ) / 100;
-    setPreview({ newStock, newAvgPrice });
-  }, [matchedPart, quantity, purchasePrice]);
-
-  /* ── Bulk row helpers ── */
-  function updateRow(id: number, field: keyof BulkRow, value: string) {
+  /* ── Bulk helpers ── */
+  function selectBulkPart(rowId: number, part: Part) {
     setRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, [field]: value } : r))
+      prev.map((r) =>
+        r.id === rowId
+          ? {
+              ...r,
+              partId: part.id,
+              partName: part.name,
+              partNumber: part.partNumber,
+              category: part.category,
+              stock: part.stock,
+              purchasePrice: part.purchasePrice,
+              unitPrice: r.unitPrice || String(Math.round(part.purchasePrice)),
+            }
+          : r
+      )
     );
+  }
+
+  function clearBulkPart(rowId: number) {
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === rowId
+          ? { ...r, partId: null, partName: "", partNumber: "", category: "", stock: 0, purchasePrice: 0 }
+          : r
+      )
+    );
+  }
+
+  function updateBulkField(rowId: number, field: "quantity" | "unitPrice", value: string) {
+    setRows((prev) => prev.map((r) => (r.id === rowId ? { ...r, [field]: value } : r)));
   }
 
   function addRow() {
@@ -145,7 +351,7 @@ export default function AddStockForm({
     setRows((prev) => (prev.length > 1 ? prev.filter((r) => r.id !== id) : prev));
   }
 
-  /* ── Submit handlers ── */
+  /* ── Submit: Single ── */
   async function handleSingleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -153,23 +359,19 @@ export default function AddStockForm({
     const qty = Number(quantity);
     const price = Number(purchasePrice);
 
-    if (!partNumber.trim()) return setError("Part number is required");
+    if (!selectedPart) return setError("Please search and select a part");
     if (qty <= 0) return setError("Quantity must be greater than zero");
     if (price < 0) return setError("Price cannot be negative");
-    if (isNewPart && !name.trim()) return setError("Name is required for new part");
-    if (isNewPart && !category) return setError("Category is required for new part");
 
     setLoading(true);
     try {
-      // Use bulk endpoint with single item for consistent summary format
       const item = {
-        name: isNewPart ? name.trim() : matchedPart!.name,
-        partNumber: partNumber.trim(),
-        category: isNewPart ? category : matchedPart!.category,
+        partId: selectedPart.id,
+        name: selectedPart.name,
+        partNumber: selectedPart.partNumber,
+        category: selectedPart.category,
         quantity: qty,
         purchasePrice: price,
-        salePrice: isNewPart ? Number(salePrice) || 0 : undefined,
-        minStock: isNewPart ? Number(minStock) || 5 : undefined,
         note: note.trim() || undefined,
       };
 
@@ -190,41 +392,32 @@ export default function AddStockForm({
     }
   }
 
+  /* ── Submit: Bulk ── */
   async function handleBulkSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
 
-    // Filter out completely empty rows
-    const filledRows = rows.filter(
-      (r) => r.name.trim() || r.partNumber.trim()
-    );
+    const filledRows = rows.filter((r) => r.partId);
 
     if (filledRows.length === 0) {
-      return setError("Add at least one item");
+      return setError("Search and select at least one part");
     }
 
-    // Validate each filled row
     for (let i = 0; i < filledRows.length; i++) {
       const r = filledRows[i];
-      if (!r.name.trim()) return setError(`Row ${i + 1}: Name is required`);
-      if (!r.partNumber.trim())
-        return setError(`Row ${i + 1}: Part number is required`);
-      if (!r.category) return setError(`Row ${i + 1}: Category is required`);
-      if (Number(r.quantity) <= 0)
-        return setError(`Row ${i + 1}: Quantity must be positive`);
-      if (Number(r.purchasePrice) < 0)
-        return setError(`Row ${i + 1}: Price cannot be negative`);
+      if (Number(r.quantity) <= 0) return setError(`"${r.partName}": Quantity must be positive`);
+      if (Number(r.unitPrice) < 0) return setError(`"${r.partName}": Price cannot be negative`);
     }
 
     setLoading(true);
     try {
       const items = filledRows.map((r) => ({
-        name: r.name.trim(),
-        partNumber: r.partNumber.trim(),
+        partId: r.partId,
+        name: r.partName,
+        partNumber: r.partNumber,
         category: r.category,
         quantity: Number(r.quantity),
-        purchasePrice: Number(r.purchasePrice),
-        salePrice: Number(r.salePrice) || 0,
+        purchasePrice: Number(r.unitPrice),
       }));
 
       const res = await fetch("/api/parts/bulk-stock-entry", {
@@ -253,6 +446,11 @@ export default function AddStockForm({
         ? "bg-red-600 text-white shadow-sm"
         : "text-gray-600 hover:text-gray-800 hover:bg-gray-100"
     }`;
+
+  const bulkTotal = rows
+    .filter((r) => r.partId)
+    .reduce((s, r) => s + (Number(r.quantity) || 0) * (Number(r.unitPrice) || 0), 0);
+  const filledCount = rows.filter((r) => r.partId).length;
 
   return (
     <div className="space-y-4">
@@ -286,36 +484,37 @@ export default function AddStockForm({
       {/* ─── SINGLE ITEM TAB ─── */}
       {tab === "single" && (
         <form onSubmit={handleSingleSubmit} className="space-y-4">
-          {/* Part Number with autocomplete */}
+          {/* Part Search */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Part Number
+              Search Part
             </label>
-            <input
-              type="text"
-              value={partNumber}
-              onChange={(e) => setPartNumber(e.target.value)}
-              className={inputClass}
-              placeholder="e.g. HON-BRK-001"
-              list="part-numbers-single"
+            <PartSearchInput
+              parts={parts}
+              fuse={fuse}
+              value={searchValue}
+              selectedPart={selectedPart}
+              onSelect={(part) => {
+                setSelectedPart(part);
+                setSearchValue(part.name);
+                setPurchasePrice(String(Math.round(part.purchasePrice)));
+              }}
+              onClear={() => {
+                setSelectedPart(null);
+                setSearchValue("");
+                setPurchasePrice("");
+                setPreview(null);
+              }}
+              placeholder="Type part name, local name, or number..."
+              autoFocus
             />
-            <datalist id="part-numbers-single">
-              {parts.map((p) => (
-                <option key={p.id} value={p.partNumber}>
-                  {p.name}
-                </option>
-              ))}
-            </datalist>
-            {matchedPart && (
-              <p className="text-xs text-green-600 mt-1">
-                ✓ Found: {matchedPart.name} — Stock: {matchedPart.stock} units
-                @ Rs {Math.round(matchedPart.purchasePrice).toLocaleString()}
-              </p>
-            )}
-            {isNewPart && partNumber.trim() && (
-              <p className="text-xs text-blue-600 mt-1">
-                New part — fill details below
-              </p>
+            {selectedPart && (
+              <div className="flex items-center gap-3 mt-1.5 text-xs text-green-700 bg-green-50 rounded-lg px-3 py-1.5">
+                <span>✓ <strong>{selectedPart.name}</strong></span>
+                <span className="text-green-600">Stock: {selectedPart.stock}</span>
+                <span className="text-green-600">@ Rs {Math.round(selectedPart.purchasePrice).toLocaleString()}</span>
+                <span className="text-gray-400 ml-auto">{selectedPart.partNumber}</span>
+              </div>
             )}
           </div>
 
@@ -325,41 +524,36 @@ export default function AddStockForm({
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Quantity
               </label>
-              <input
-                type="number"
+              <IntegerInput
                 value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
+                onChange={setQuantity}
                 className={inputClass}
                 placeholder="0"
-                min="1"
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Purchase Price (per unit)
               </label>
-              <input
-                type="number"
+              <IntegerInput
                 value={purchasePrice}
-                onChange={(e) => setPurchasePrice(e.target.value)}
+                onChange={setPurchasePrice}
                 className={inputClass}
                 placeholder="0"
-                min="0"
-                step="0.01"
               />
             </div>
           </div>
 
-          {/* Live Preview for existing parts */}
-          {preview && matchedPart && (
+          {/* Live Preview */}
+          {preview && selectedPart && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-2">
               <p className="text-sm font-semibold text-blue-800">Preview</p>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
-                  <span className="text-blue-600">Old Stock:</span>{" "}
+                  <span className="text-blue-600">Current Stock:</span>{" "}
                   <span className="font-medium text-blue-900">
-                    {matchedPart.stock} units @ Rs{" "}
-                    {Math.round(matchedPart.purchasePrice).toLocaleString()}
+                    {selectedPart.stock} units @ Rs{" "}
+                    {Math.round(selectedPart.purchasePrice).toLocaleString()}
                   </span>
                 </div>
                 <div>
@@ -374,72 +568,6 @@ export default function AddStockForm({
                     {preview.newStock} units @ Rs{" "}
                     {Math.round(preview.newAvgPrice).toLocaleString()}
                   </span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* New Part Fields */}
-          {isNewPart && partNumber.trim() && (
-            <div className="border border-blue-200 rounded-lg p-4 space-y-4 bg-blue-50/50">
-              <p className="text-sm font-medium text-blue-700">
-                New Part Details
-              </p>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Part Name
-                </label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className={inputClass}
-                  placeholder="e.g. Brake Shoe"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Category
-                </label>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className={inputClass}
-                >
-                  <option value="">Select category</option>
-                  {CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Sale Price
-                  </label>
-                  <input
-                    type="number"
-                    value={salePrice}
-                    onChange={(e) => setSalePrice(e.target.value)}
-                    className={inputClass}
-                    placeholder="0"
-                    min="0"
-                    step="0.01"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Min Stock Level
-                  </label>
-                  <input
-                    type="number"
-                    value={minStock}
-                    onChange={(e) => setMinStock(e.target.value)}
-                    className={inputClass}
-                    min="0"
-                  />
                 </div>
               </div>
             </div>
@@ -470,14 +598,10 @@ export default function AddStockForm({
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !selectedPart}
               className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
             >
-              {loading
-                ? "Processing..."
-                : isNewPart
-                ? "Create & Add Stock"
-                : "Add Stock"}
+              {loading ? "Processing..." : "Add Stock"}
             </button>
           </div>
         </form>
@@ -486,134 +610,81 @@ export default function AddStockForm({
       {/* ─── BULK ADD TAB ─── */}
       {tab === "bulk" && (
         <form onSubmit={handleBulkSubmit} className="space-y-4">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="text-left px-2 py-2 font-medium text-gray-600 text-xs">
-                    Name
-                  </th>
-                  <th className="text-left px-2 py-2 font-medium text-gray-600 text-xs">
-                    Part #
-                  </th>
-                  <th className="text-left px-2 py-2 font-medium text-gray-600 text-xs">
-                    Category
-                  </th>
-                  <th className="text-left px-2 py-2 font-medium text-gray-600 text-xs w-20">
-                    Qty
-                  </th>
-                  <th className="text-left px-2 py-2 font-medium text-gray-600 text-xs w-24">
-                    Price (Rs)
-                  </th>
-                  <th className="text-left px-2 py-2 font-medium text-gray-600 text-xs w-24">
-                    Sale (Rs)
-                  </th>
-                  <th className="px-2 py-2 w-8" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row, i) => (
-                  <tr key={row.id} className="border-b border-gray-100">
-                    <td className="px-1 py-1.5">
-                      <input
-                        type="text"
-                        value={row.name}
-                        onChange={(e) =>
-                          updateRow(row.id, "name", e.target.value)
-                        }
-                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-red-500"
-                        placeholder={`Part ${i + 1}`}
-                      />
-                    </td>
-                    <td className="px-1 py-1.5">
-                      <input
-                        type="text"
-                        value={row.partNumber}
-                        onChange={(e) =>
-                          updateRow(row.id, "partNumber", e.target.value)
-                        }
-                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-red-500"
-                        placeholder="HON-..."
-                      />
-                    </td>
-                    <td className="px-1 py-1.5">
-                      <select
-                        value={row.category}
-                        onChange={(e) =>
-                          updateRow(row.id, "category", e.target.value)
-                        }
-                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-red-500"
-                      >
-                        <option value="">--</option>
-                        {CATEGORIES.map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-1 py-1.5">
-                      <input
-                        type="number"
-                        value={row.quantity}
-                        onChange={(e) =>
-                          updateRow(row.id, "quantity", e.target.value)
-                        }
-                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-red-500"
-                        min="1"
-                        placeholder="0"
-                      />
-                    </td>
-                    <td className="px-1 py-1.5">
-                      <input
-                        type="number"
-                        value={row.purchasePrice}
-                        onChange={(e) =>
-                          updateRow(row.id, "purchasePrice", e.target.value)
-                        }
-                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-red-500"
-                        min="0"
-                        step="0.01"
-                        placeholder="0"
-                      />
-                    </td>
-                    <td className="px-1 py-1.5">
-                      <input
-                        type="number"
-                        value={row.salePrice}
-                        onChange={(e) =>
-                          updateRow(row.id, "salePrice", e.target.value)
-                        }
-                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-red-500"
-                        min="0"
-                        step="0.01"
-                        placeholder="0"
-                      />
-                    </td>
-                    <td className="px-1 py-1.5 text-center">
-                      <button
-                        type="button"
-                        onClick={() => removeRow(row.id)}
-                        className="p-1 text-gray-400 hover:text-red-500 transition-colors"
-                        title="Remove row"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <p className="text-xs text-gray-500">Search and select parts by name. Quantity defaults to 1.</p>
+
+          <div className="space-y-2">
+            {rows.map((row, i) => (
+              <div
+                key={row.id}
+                className={`flex items-start gap-2 p-2 rounded-lg border ${
+                  row.partId ? "border-green-200 bg-green-50/50" : "border-gray-100 bg-gray-50/50"
+                }`}
+              >
+                <div className="text-xs text-gray-400 font-medium pt-2.5 w-5 shrink-0">
+                  {i + 1}
+                </div>
+                {/* Part search */}
+                <div className="flex-1 min-w-0">
+                  <PartSearchInput
+                    parts={parts}
+                    fuse={fuse}
+                    value={row.partName}
+                    selectedPart={row.partId ? (parts.find((p) => p.id === row.partId) || null) : null}
+                    onSelect={(part) => selectBulkPart(row.id, part)}
+                    onClear={() => clearBulkPart(row.id)}
+                    placeholder={`Search part ${i + 1}...`}
+                  />
+                  {row.partId && (
+                    <div className="text-[10px] text-gray-400 mt-0.5 px-1">
+                      {row.partNumber} · Stock: {row.stock} · Current: Rs {Math.round(row.purchasePrice).toLocaleString()}
+                    </div>
+                  )}
+                </div>
+                {/* Qty */}
+                <div className="w-20 shrink-0">
+                  <IntegerInput
+                    value={row.quantity}
+                    onChange={(v) => updateBulkField(row.id, "quantity", v)}
+                    className="w-full px-2 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-red-500 text-center"
+                    placeholder="Qty"
+                  />
+                </div>
+                {/* Price */}
+                <div className="w-24 shrink-0">
+                  <IntegerInput
+                    value={row.unitPrice}
+                    onChange={(v) => updateBulkField(row.id, "unitPrice", v)}
+                    className="w-full px-2 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-red-500 text-right"
+                    placeholder="Price"
+                  />
+                </div>
+                {/* Remove */}
+                <button
+                  type="button"
+                  onClick={() => removeRow(row.id)}
+                  className="p-2 text-gray-400 hover:text-red-500 transition-colors shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
           </div>
 
-          <button
-            type="button"
-            onClick={addRow}
-            className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-medium transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Add Row
-          </button>
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={addRow}
+              className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-medium transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Add Row
+            </button>
+            {filledCount > 0 && (
+              <div className="text-sm text-gray-600">
+                {filledCount} part(s) · Total: <span className="font-bold text-gray-900">Rs {Math.round(bulkTotal).toLocaleString()}</span>
+              </div>
+            )}
+          </div>
 
           {/* Buttons */}
           <div className="flex justify-end gap-3 pt-2">
@@ -626,15 +697,10 @@ export default function AddStockForm({
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || filledCount === 0}
               className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
             >
-              {loading
-                ? "Processing..."
-                : `Add ${
-                    rows.filter((r) => r.name.trim() || r.partNumber.trim())
-                      .length
-                  } Item(s)`}
+              {loading ? "Processing..." : `Add Stock for ${filledCount} Part(s)`}
             </button>
           </div>
         </form>

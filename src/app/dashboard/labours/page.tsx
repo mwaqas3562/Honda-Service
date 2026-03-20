@@ -6,6 +6,8 @@ import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
+import IntegerInput from "@/components/IntegerInput";
+import { fmtRs } from "@/lib/utils";
 
 interface Labour {
   id: number;
@@ -124,7 +126,7 @@ export default function LaboursPage() {
     }
   }
 
-  const fmtRs = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
+
   const inputCls =
     "w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-shadow bg-white placeholder:text-gray-400";
 
@@ -286,13 +288,11 @@ export default function LaboursPage() {
             <label className="block text-sm font-semibold text-gray-700 mb-1.5">
               Default Price (Rs) <span className="text-red-500">*</span>
             </label>
-            <input
-              type="number"
+            <IntegerInput
               value={defaultPrice}
-              onChange={(e) => setDefaultPrice(e.target.value)}
+              onChange={setDefaultPrice}
               className={inputCls}
               placeholder="0"
-              min="0"
             />
           </div>
 

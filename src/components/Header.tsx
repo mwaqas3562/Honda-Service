@@ -66,20 +66,23 @@ export default function Header({ onToggleSidebar }: { onToggleSidebar?: () => vo
 
         const found: SearchResult[] = [];
         if (partsRes.ok) {
-          const parts = await partsRes.json();
+          const partsJson = await partsRes.json();
+          const parts = partsJson.data ?? partsJson;
           parts.slice(0, 5).forEach((p: { id: number; name: string; partNumber: string; stock: number }) => {
             found.push({ type: "part", id: p.id, title: p.name, subtitle: `${p.partNumber} · Stock: ${p.stock}` });
           });
         }
         if (salesRes.ok) {
-          const sales = await salesRes.json();
+          const salesJson = await salesRes.json();
+          const sales = salesJson.data ?? salesJson;
           const q = value.toLowerCase();
           sales.filter((s: { customer: string | null }) => (s.customer || "").toLowerCase().includes(q)).slice(0, 3).forEach((s: { id: number; customer: string | null; total: number }) => {
             found.push({ type: "sale", id: s.id, title: `Sale S${String(s.id).padStart(3, "0")}`, subtitle: `${s.customer || "Walk-in"} · Rs ${Math.round(s.total).toLocaleString()}` });
           });
         }
         if (servicesRes.ok) {
-          const svcs = await servicesRes.json();
+          const svcsJson = await servicesRes.json();
+          const svcs = svcsJson.data ?? svcsJson;
           const q = value.toLowerCase();
           svcs.filter((s: { customerName: string; bikeModel: string }) => s.customerName.toLowerCase().includes(q) || s.bikeModel.toLowerCase().includes(q)).slice(0, 3).forEach((s: { id: number; customerName: string; bikeModel: string }) => {
             found.push({ type: "service", id: s.id, title: `Service SV${String(s.id).padStart(3, "0")}`, subtitle: `${s.customerName} · ${s.bikeModel}` });

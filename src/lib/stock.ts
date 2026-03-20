@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { round2, n } from "@/lib/utils";
 
 type StockChangeType = "purchase" | "sale" | "service" | "adjustment";
 
@@ -21,12 +22,6 @@ interface StockEntryResult {
   purchasePrice: number;
 }
 
-/**
- * Round a number to 2 decimal places.
- */
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
 
 /**
  * Smart stock entry: adds stock and calculates weighted average purchase price.
@@ -41,12 +36,15 @@ export async function addStockEntry(
   if (addedQuantity <= 0) throw new Error("Quantity must be greater than zero");
   if (batchPurchasePrice < 0) throw new Error("Purchase price cannot be negative");
 
+  addedQuantity = Math.max(1, Math.round(addedQuantity));
+  batchPurchasePrice = Math.max(0, batchPurchasePrice);
+
   return prisma.$transaction(async (tx) => {
     const part = await tx.part.findUnique({ where: { id: partId } });
     if (!part) throw new Error("Part not found");
 
     const prevStock = part.stock;
-    const prevPrice = part.purchasePrice;
+    const prevPrice = n(part.purchasePrice);
     const newStock = prevStock + addedQuantity;
 
     const newAvgPrice = round2(

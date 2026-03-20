@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, RefreshCw, Search } from "lucide-react";
+import { Plus, RefreshCw, Search, Upload, FileSpreadsheet, CheckCircle, XCircle, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
+import IntegerInput from "@/components/IntegerInput";
+import { fmtRs } from "@/lib/utils";
 
 interface PurchaseItem {
   id: number;
@@ -73,20 +76,136 @@ export default function PurchasesPage() {
   const [dateTo, setDateTo] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
+  // Upload (Bulk)
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadStep, setUploadStep] = useState<"pick" | "map" | "done">("pick");
+  const [uploadHeaders, setUploadHeaders] = useState<string[]>([]);
+  const [uploadSampleRows, setUploadSampleRows] = useState<Record<string, string>[]>([]);
+  const [uploadTotalRows, setUploadTotalRows] = useState(0);
+  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
+  const [uploadVendorId, setUploadVendorId] = useState("");
+  const [uploadStatus, setUploadStatus] = useState("received");
+  const [uploadResult, setUploadResult] = useState<{
+    success: boolean;
+    totalRows: number;
+    purchasesCreated: number;
+    itemsCreated: number;
+    skipped: number;
+    errors: string[];
+  } | null>(null);
+
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
       const [pRes, vRes, partsRes] = await Promise.all([
         fetch("/api/purchases"), fetch("/api/vendors"), fetch("/api/parts"),
       ]);
-      if (pRes.ok) setPurchases(await pRes.json());
+      if (pRes.ok) {
+        const pJson = await pRes.json();
+        setPurchases(pJson.data ?? pJson);
+      }
       if (vRes.ok) setVendors(await vRes.json());
-      if (partsRes.ok) setParts(await partsRes.json());
+      if (partsRes.ok) {
+        const partsJson = await partsRes.json();
+        setParts(partsJson.data ?? partsJson);
+      }
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // ── Upload helpers ──
+  const PURCHASE_FIELDS = [
+    { value: "partName", label: "Part Name" },
+    { value: "partNumber", label: "Part Number" },
+    { value: "quantity", label: "Quantity" },
+    { value: "unitPrice", label: "Unit Price" },
+    { value: "vendor", label: "Vendor" },
+    { value: "skip", label: "— Skip —" },
+  ];
+
+  const downloadTemplate = () => {
+    const templateData = parts.length > 0
+      ? parts.slice(0, 5).map((p) => ({
+          "Part Name": p.name,
+          "Part Number": p.partNumber,
+          "Quantity": 1,
+          "Unit Price": p.purchasePrice,
+        }))
+      : [{
+          "Part Name": "Oil Filter",
+          "Part Number": "HON-OF-001",
+          "Quantity": 10,
+          "Unit Price": 150,
+        }];
+    const ws = XLSX.utils.json_to_sheet(templateData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Purchases");
+    XLSX.writeFile(wb, "honda_purchases_template.xlsx");
+  };
+
+  const handleFileSelect = async (file: File) => {
+    setUploadFile(file);
+    setUploadResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("mode", "preview");
+      const res = await fetch("/api/purchases/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (res.ok && data.preview) {
+        setUploadHeaders(data.originalHeaders);
+        setUploadSampleRows(data.sampleRawRows);
+        setUploadTotalRows(data.totalRows);
+        setColumnMapping(data.detectedMapping);
+        setUploadStep("map");
+      }
+    } catch {
+      // Preview failed
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!uploadFile) return;
+    setUploading(true);
+    setUploadResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+      formData.append("mode", "import");
+      formData.append("mapping", JSON.stringify(columnMapping));
+      if (uploadVendorId) formData.append("vendorId", uploadVendorId);
+      formData.append("status", uploadStatus);
+      const res = await fetch("/api/purchases/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        setUploadResult(data);
+        setUploadStep("done");
+        fetchAll();
+      } else {
+        setUploadResult({ success: false, totalRows: 0, purchasesCreated: 0, itemsCreated: 0, skipped: 0, errors: [data.error] });
+        setUploadStep("done");
+      }
+    } catch {
+      setUploadResult({ success: false, totalRows: 0, purchasesCreated: 0, itemsCreated: 0, skipped: 0, errors: ["Upload failed"] });
+      setUploadStep("done");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const resetUpload = () => {
+    setShowUploadModal(true);
+    setUploadFile(null);
+    setUploadResult(null);
+    setUploadStep("pick");
+    setColumnMapping({});
+    setUploadVendorId("");
+    setUploadStatus("received");
+  };
 
   function addItem() {
     setItems((prev) => [...prev, { id: itemId++, partId: "", quantity: "", unitPrice: "" }]);
@@ -163,7 +282,7 @@ export default function PurchasesPage() {
     } catch (err) { console.error(err); }
   }
 
-  const fmtRs = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
+
   const statusColor: Record<string, string> = {
     received: "bg-green-100 text-green-700",
     in_transit: "bg-yellow-100 text-yellow-700",
@@ -203,13 +322,22 @@ export default function PurchasesPage() {
         title="Purchases"
         description="Track purchase orders from suppliers"
         action={
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            New Purchase
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={resetUpload}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+            >
+              <Upload className="w-4 h-4" />
+              Upload Excel
+            </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Purchase
+            </button>
+          </div>
         }
       />
 
@@ -309,8 +437,8 @@ export default function PurchasesPage() {
                     <option value="">Select Part</option>
                     {parts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
-                  <input type="number" value={item.quantity} onChange={(e) => updateItem(item.id, "quantity", e.target.value)} className="w-20 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Qty" min="1" />
-                  <input type="number" value={item.unitPrice} onChange={(e) => updateItem(item.id, "unitPrice", e.target.value)} className="w-28 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Price" min="0" step="0.01" />
+                  <IntegerInput value={item.quantity} onChange={(v) => updateItem(item.id, "quantity", v)} className="w-20 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Qty" />
+                  <IntegerInput value={item.unitPrice} onChange={(v) => updateItem(item.id, "unitPrice", v)} className="w-28 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Price" />
                   <button type="button" onClick={() => removeItem(item.id)} className="px-2 text-gray-400 hover:text-red-500">✕</button>
                 </div>
               ))}
@@ -361,6 +489,167 @@ export default function PurchasesPage() {
             <button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700">Add Vendor</button>
           </div>
         </form>
+      </Modal>
+
+      {/* Bulk Upload Modal */}
+      <Modal open={showUploadModal} onClose={() => setShowUploadModal(false)} title="Bulk Purchase Upload" wide>
+        {uploadStep === "pick" && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Upload an Excel or CSV file with purchase items. The file should contain columns for Part Name, Quantity, and Unit Price.
+            </p>
+
+            {/* Template download */}
+            <button onClick={downloadTemplate} className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 font-medium">
+              <Download className="w-4 h-4" /> Download Template
+            </button>
+
+            {/* Vendor & Status for the import */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Default Vendor</label>
+                <select value={uploadVendorId} onChange={(e) => setUploadVendorId(e.target.value)} className={inputClass}>
+                  <option value="">From file (or select)</option>
+                  {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </select>
+                <p className="text-[10px] text-gray-400 mt-1">If file has a Vendor column, it will be used instead</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                <select value={uploadStatus} onChange={(e) => setUploadStatus(e.target.value)} className={inputClass}>
+                  <option value="received">Received (update stock)</option>
+                  <option value="in_transit">In Transit</option>
+                  <option value="ordered">Ordered</option>
+                </select>
+              </div>
+            </div>
+
+            {/* File drop zone */}
+            <div
+              className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-400 transition-colors cursor-pointer"
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const f = e.dataTransfer.files[0];
+                if (f) handleFileSelect(f);
+              }}
+              onClick={() => {
+                const input = document.createElement("input");
+                input.type = "file";
+                input.accept = ".xlsx,.xls,.csv";
+                input.onchange = (e) => {
+                  const f = (e.target as HTMLInputElement).files?.[0];
+                  if (f) handleFileSelect(f);
+                };
+                input.click();
+              }}
+            >
+              <FileSpreadsheet className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+              <p className="text-sm text-gray-600 font-medium">Drop Excel/CSV file here or click to browse</p>
+              <p className="text-xs text-gray-400 mt-1">Supports .xlsx, .xls, .csv</p>
+            </div>
+          </div>
+        )}
+
+        {uploadStep === "map" && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-900">Map Columns</p>
+                <p className="text-xs text-gray-500">{uploadTotalRows} row(s) found in <span className="font-medium">{uploadFile?.name}</span></p>
+              </div>
+              <button onClick={() => setUploadStep("pick")} className="text-xs text-gray-500 hover:text-gray-700">← Back</button>
+            </div>
+
+            <div className="overflow-x-auto border border-gray-200 rounded-lg">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="text-left px-3 py-2 font-medium text-gray-500">Excel Column</th>
+                    <th className="text-left px-3 py-2 font-medium text-gray-500">Maps To</th>
+                    <th className="text-left px-3 py-2 font-medium text-gray-500">Sample Data</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {uploadHeaders.map((header) => (
+                    <tr key={header}>
+                      <td className="px-3 py-2 font-mono text-gray-700">{header}</td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={columnMapping[header] || "skip"}
+                          onChange={(e) => setColumnMapping((prev) => ({ ...prev, [header]: e.target.value }))}
+                          className={`px-2 py-1 border rounded text-xs ${
+                            columnMapping[header] && columnMapping[header] !== "skip"
+                              ? "border-green-300 bg-green-50 text-green-700"
+                              : "border-gray-200"
+                          }`}
+                        >
+                          {PURCHASE_FIELDS.map((f) => (
+                            <option key={f.value} value={f.value}>{f.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2 text-gray-500 max-w-[200px] truncate">
+                        {uploadSampleRows.slice(0, 3).map((r) => r[header]).filter(Boolean).join(" | ")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {!uploadVendorId && !Object.values(columnMapping).includes("vendor") && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 text-xs text-yellow-700">
+                ⚠️ No vendor column mapped and no default vendor selected. Go back to select a vendor or map a vendor column.
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setUploadStep("pick")} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Back</button>
+              <button
+                onClick={handleUpload}
+                disabled={uploading || !Object.values(columnMapping).includes("partName")}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {uploading ? "Processing..." : `Import ${uploadTotalRows} Rows`}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {uploadStep === "done" && uploadResult && (
+          <div className="space-y-4">
+            <div className={`flex items-center gap-3 p-4 rounded-lg ${uploadResult.success ? "bg-green-50" : "bg-red-50"}`}>
+              {uploadResult.success
+                ? <CheckCircle className="w-6 h-6 text-green-500 flex-shrink-0" />
+                : <XCircle className="w-6 h-6 text-red-500 flex-shrink-0" />
+              }
+              <div>
+                <p className={`text-sm font-medium ${uploadResult.success ? "text-green-800" : "text-red-800"}`}>
+                  {uploadResult.success ? "Import Complete!" : "Import Failed"}
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {uploadResult.purchasesCreated} purchase(s) created · {uploadResult.itemsCreated} item(s) added · {uploadResult.skipped} skipped
+                </p>
+              </div>
+            </div>
+
+            {uploadResult.errors.length > 0 && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 max-h-[150px] overflow-y-auto">
+                <p className="text-xs font-medium text-yellow-800 mb-1">Warnings:</p>
+                {uploadResult.errors.map((err, i) => (
+                  <p key={i} className="text-xs text-yellow-700">{err}</p>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setShowUploadModal(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Close</button>
+              <button onClick={resetUpload} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">Upload Another</button>
+            </div>
+          </div>
+        )}
       </Modal>
     </>
   );

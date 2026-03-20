@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { Plus, RefreshCw, Search } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
+import IntegerInput from "@/components/IntegerInput";
+import { fmtRs } from "@/lib/utils";
 
 interface ServiceRecord {
   id: number;
@@ -66,8 +68,14 @@ export default function ServicesPage() {
     setLoading(true);
     try {
       const [sRes, pRes] = await Promise.all([fetch("/api/services"), fetch("/api/parts")]);
-      if (sRes.ok) setServices(await sRes.json());
-      if (pRes.ok) setParts(await pRes.json());
+      if (sRes.ok) {
+        const sJson = await sRes.json();
+        setServices(sJson.data ?? sJson);
+      }
+      if (pRes.ok) {
+        const pJson = await pRes.json();
+        setParts(pJson.data ?? pJson);
+      }
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }, []);
@@ -145,7 +153,7 @@ export default function ServicesPage() {
     } catch (err) { console.error(err); }
   }
 
-  const fmtRs = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
+
   const statusColor: Record<string, string> = {
     pending: "bg-red-100 text-red-700",
     in_progress: "bg-yellow-100 text-yellow-700",
@@ -299,7 +307,7 @@ export default function ServicesPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Labor Cost (Rs)</label>
-              <input type="number" value={laborCost} onChange={(e) => setLaborCost(e.target.value)} className={inputClass} min="0" step="0.01" />
+              <IntegerInput value={laborCost} onChange={setLaborCost} className={inputClass} />
             </div>
           </div>
 
@@ -319,8 +327,8 @@ export default function ServicesPage() {
                         <option key={p.id} value={p.id}>{p.name} (Stock: {p.stock})</option>
                       ))}
                     </select>
-                    <input type="number" value={item.quantity} onChange={(e) => updateItem(item.id, "quantity", e.target.value)} className="w-20 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Qty" min="1" />
-                    <input type="number" value={item.unitPrice} onChange={(e) => updateItem(item.id, "unitPrice", e.target.value)} className="w-28 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Price" />
+                    <IntegerInput value={item.quantity} onChange={(v) => updateItem(item.id, "quantity", v)} className="w-20 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Qty" />
+                    <IntegerInput value={item.unitPrice} onChange={(v) => updateItem(item.id, "unitPrice", v)} className="w-28 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Price" />
                     <button type="button" onClick={() => removeItem(item.id)} className="px-2 text-gray-400 hover:text-red-500">✕</button>
                   </div>
                 ))}
