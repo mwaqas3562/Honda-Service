@@ -40,10 +40,13 @@ export async function GET(req: NextRequest) {
     const transactions: Transaction[] = [];
 
     // ── Sales ──
-    if (typeFilter === "all" || typeFilter === "sale") {
+    if (typeFilter === "all" || typeFilter === "sale" || typeFilter === "service") {
       const salesWhere: Record<string, unknown> = {
         createdAt: { gte: from, lte: to },
       };
+      // When filtering by type, scope to the right saleType
+      if (typeFilter === "sale") salesWhere.saleType = "sale";
+      if (typeFilter === "service") salesWhere.saleType = "quick_service";
       if (paymentFilter !== "all") salesWhere.paymentType = paymentFilter;
       if (search) {
         salesWhere.OR = [
@@ -64,19 +67,21 @@ export async function GET(req: NextRequest) {
       });
 
       for (const s of sales) {
+        const isQS = s.saleType === "quick_service";
+        const prefix = isQS ? "QS" : "S";
         transactions.push({
           id: s.id,
-          type: "sale",
+          type: isQS ? "service" : "sale",
           date: s.createdAt.toISOString(),
           customer: s.customer || s.jobCard?.customerName || "Walk-in",
           description: s.jobCard
             ? `Job Card #${s.jobCard.jobCardNumber}`
-            : `Sale #${s.id}`,
+            : isQS ? `Quick Service #${s.id}` : `Sale #${s.id}`,
           paymentType: s.paymentType || "cash",
           itemCount: s.items.length + s.labourItems.length,
           total: n(s.total),
           status: s.status,
-          ref: s.jobCard?.jobCardNumber || `S-${s.id}`,
+          ref: s.jobCard?.jobCardNumber || `${prefix}-${s.id}`,
         });
       }
     }

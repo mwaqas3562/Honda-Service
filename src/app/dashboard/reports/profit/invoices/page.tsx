@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Calendar,
@@ -76,7 +76,7 @@ type Preset = { label: string; from: string; to: string };
 
 /* ─── Component ──────────────────────────────── */
 
-export default function InvoiceProfitPage() {
+function InvoiceProfitPageContent() {
   const { toast } = useToast();
   const router = useRouter();
   const sp = useSearchParams();
@@ -95,7 +95,7 @@ export default function InvoiceProfitPage() {
 
   const presets = getDatePresets();
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     if (!customer) return;
     setLoading(true);
     try {
@@ -104,7 +104,7 @@ export default function InvoiceProfitPage() {
         from: dateFrom,
         to: dateTo,
       });
-      const res = await fetch(`/api/reports/profit/invoices?${params}`);
+      const res = await fetch(`/api/reports/profit/invoices?${params}`, { signal });
       if (res.ok) {
         const data = await res.json();
         setInvoices(data.invoices);
@@ -112,7 +112,8 @@ export default function InvoiceProfitPage() {
       } else {
         toast("Failed to load invoice data", "error");
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       toast("Network error", "error");
     } finally {
       setLoading(false);
@@ -120,7 +121,9 @@ export default function InvoiceProfitPage() {
   }, [customer, dateFrom, dateTo, toast]);
 
   useEffect(() => {
-    fetchData();
+    const c = new AbortController();
+    fetchData(c.signal);
+    return () => c.abort();
   }, [fetchData]);
 
   function applyPreset(p: Preset) {
@@ -652,5 +655,13 @@ function InvoiceRow({
         </tr>
       )}
     </>
+  );
+}
+
+export default function InvoiceProfitPage() {
+  return (
+    <Suspense>
+      <InvoiceProfitPageContent />
+    </Suspense>
   );
 }

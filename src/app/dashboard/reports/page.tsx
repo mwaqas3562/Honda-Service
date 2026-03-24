@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   RefreshCw,
@@ -95,7 +95,7 @@ const PRESET_LABELS: Record<Preset, string> = {
   custom: "Custom Range",
 };
 
-export default function ReportsPage() {
+function ReportsPageContent() {
   const router = useRouter();
   const sp = useSearchParams();
   const urlDates = parseDateParams(sp);
@@ -105,20 +105,22 @@ export default function ReportsPage() {
   const [customFrom, setCustomFrom] = useState(urlDates.fromUrl ? urlDates.from : "");
   const [customTo, setCustomTo] = useState(urlDates.fromUrl ? urlDates.to : "");
 
-  const fetchReports = useCallback(async () => {
+  const fetchReports = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const dates = preset === "custom" ? { from: customFrom, to: customTo } : getPresetDates(preset);
       if (!dates.from || !dates.to) return;
-      const res = await fetch(`/api/reports?from=${dates.from}&to=${dates.to}`);
+      const res = await fetch(`/api/reports?from=${dates.from}&to=${dates.to}`, { signal });
       if (res.ok) setData(await res.json());
-    } catch (err) { console.error(err); }
+    } catch (err) { if (err instanceof Error && err.name === "AbortError") return; console.error(err); }
     finally { setLoading(false); }
   }, [preset, customFrom, customTo]);
 
   useEffect(() => {
     if (preset === "custom" && (!customFrom || !customTo)) return;
-    fetchReports();
+    const c = new AbortController();
+    fetchReports(c.signal);
+    return () => c.abort();
   }, [fetchReports, preset, customFrom, customTo]);
 
 
@@ -415,4 +417,8 @@ export default function ReportsPage() {
       </div>
     </>
   );
+}
+
+export default function ReportsPage() {
+  return <Suspense><ReportsPageContent /></Suspense>;
 }

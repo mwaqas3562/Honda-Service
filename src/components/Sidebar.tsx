@@ -28,6 +28,8 @@ import {
   TrendingUp,
   Wallet,
   CalendarCheck,
+  Repeat,
+  Bell,
   LogOut,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -55,6 +57,7 @@ const menuItems: MenuItem[] = [
   { label: "Salary", href: "/dashboard/salary", icon: Wallet },
   { label: "Bonus & Rewards", href: "/dashboard/bonus-rewards", icon: Trophy },
   { label: "Wheel Balancer", href: "/dashboard/wheel-balancer", icon: Target },
+  { label: "Reminders", href: "/dashboard/reminders", icon: Bell },
   {
     label: "Reports",
     href: "/dashboard/reports",
@@ -68,6 +71,7 @@ const menuItems: MenuItem[] = [
       { label: "Customers", href: "/dashboard/reports/customers", icon: UserSearch },
       { label: "Profit Report", href: "/dashboard/reports/profit", icon: TrendingUp },
       { label: "Customer Profit", href: "/dashboard/reports/profit/customers", icon: TrendingUp },
+      { label: "Repeat Analysis", href: "/dashboard/reports/repeat-customers", icon: Repeat },
     ],
   },
 ];

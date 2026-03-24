@@ -1,19 +1,35 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, RefreshCw, Search, Upload, FileSpreadsheet, CheckCircle, XCircle, Download } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Plus, RefreshCw, Search, Upload, FileSpreadsheet, CheckCircle, XCircle, Download, Eye, Pencil } from "lucide-react";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import * as XLSX from "xlsx";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import IntegerInput from "@/components/IntegerInput";
+import SmartPartSearch, { SearchablePart } from "@/components/SmartPartSearch";
+import { useToast } from "@/components/Toast";
 import { fmtRs } from "@/lib/utils";
+import { PURCHASE_STATUS_COLOR, PURCHASE_STATUS_LABEL, inputClass } from "@/lib/constants";
 
 interface PurchaseItem {
   id: number;
+  partId: number;
   quantity: number;
   unitPrice: number;
   total: number;
   part: { name: string; partNumber: string };
+}
+
+interface ReceiveItem {
+  partId: number;
+  partName: string;
+  partNumber: string;
+  orderedQty: number;
+  orderedPrice: number;
+  currentPurchasePrice: number;
+  quantity: number;
+  unitPrice: number;
 }
 
 interface Purchase {
@@ -37,18 +53,22 @@ interface Part {
   name: string;
   partNumber: string;
   purchasePrice: number;
+  salePrice: number;
+  stock: number;
+  aliases: string[];
+  usageCount: number;
 }
 
 interface FormItem {
   id: number;
   partId: string;
+  partName: string;
   quantity: string;
   unitPrice: string;
 }
 
-let itemId = 1;
-
 export default function PurchasesPage() {
+  const { toast } = useToast();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [parts, setParts] = useState<Part[]>([]);
@@ -57,13 +77,29 @@ export default function PurchasesPage() {
   const [showVendorModal, setShowVendorModal] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
   const [error, setError] = useState("");
+  const itemIdRef = useRef(1);
 
   const [vendorId, setVendorId] = useState("");
-  const [status, setStatus] = useState("received");
+  const [status, setStatus] = useState("ordered");
   const [note, setNote] = useState("");
   const [items, setItems] = useState<FormItem[]>([
-    { id: itemId++, partId: "", quantity: "", unitPrice: "" },
+    { id: itemIdRef.current++, partId: "", partName: "", quantity: "", unitPrice: "" },
   ]);
+
+  // Receive Review Modal
+  const [receiveModalPO, setReceiveModalPO] = useState<Purchase | null>(null);
+  const [receiveItems, setReceiveItems] = useState<ReceiveItem[]>([]);
+  const [receiveLoading, setReceiveLoading] = useState(false);
+
+  // Detail / Edit Modal
+  const [detailPO, setDetailPO] = useState<Purchase | null>(null);
+  const [editItems, setEditItems] = useState<ReceiveItem[]>([]);
+  const [editLoading, setEditLoading] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Status change confirm (for non-received transitions)
+  const [pendingStatusChange, setPendingStatusChange] = useState<{ id: number; status: string } | null>(null);
+  const [statusChangeLoading, setStatusChangeLoading] = useState(false);
 
   // Vendor form
   const [vendorName, setVendorName] = useState("");
@@ -86,7 +122,7 @@ export default function PurchasesPage() {
   const [uploadTotalRows, setUploadTotalRows] = useState(0);
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
   const [uploadVendorId, setUploadVendorId] = useState("");
-  const [uploadStatus, setUploadStatus] = useState("received");
+  const [uploadStatus, setUploadStatus] = useState("ordered");
   const [uploadResult, setUploadResult] = useState<{
     success: boolean;
     totalRows: number;
@@ -96,11 +132,11 @@ export default function PurchasesPage() {
     errors: string[];
   } | null>(null);
 
-  const fetchAll = useCallback(async () => {
+  const fetchAll = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const [pRes, vRes, partsRes] = await Promise.all([
-        fetch("/api/purchases"), fetch("/api/vendors"), fetch("/api/parts"),
+        fetch("/api/purchases", { signal }), fetch("/api/vendors", { signal }), fetch("/api/parts", { signal }),
       ]);
       if (pRes.ok) {
         const pJson = await pRes.json();
@@ -111,11 +147,11 @@ export default function PurchasesPage() {
         const partsJson = await partsRes.json();
         setParts(partsJson.data ?? partsJson);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (err instanceof Error && err.name === "AbortError") return; console.error(err); }
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { const c = new AbortController(); fetchAll(c.signal); return () => c.abort(); }, [fetchAll]);
 
   // ── Upload helpers ──
   const PURCHASE_FIELDS = [
@@ -204,11 +240,11 @@ export default function PurchasesPage() {
     setUploadStep("pick");
     setColumnMapping({});
     setUploadVendorId("");
-    setUploadStatus("received");
+    setUploadStatus("ordered");
   };
 
   function addItem() {
-    setItems((prev) => [...prev, { id: itemId++, partId: "", quantity: "", unitPrice: "" }]);
+    setItems((prev) => [...prev, { id: itemIdRef.current++, partId: "", partName: "", quantity: "", unitPrice: "" }]);
   }
   function removeItem(id: number) {
     setItems((prev) => prev.length > 1 ? prev.filter((i) => i.id !== id) : prev);
@@ -216,12 +252,13 @@ export default function PurchasesPage() {
   function updateItem(id: number, field: string, value: string) {
     setItems((prev) => prev.map((i) => {
       if (i.id !== id) return i;
-      const updated = { ...i, [field]: value };
-      if (field === "partId" && value) {
-        const part = parts.find((p) => p.id === parseInt(value, 10));
-        if (part) updated.unitPrice = String(part.purchasePrice);
-      }
-      return updated;
+      return { ...i, [field]: value };
+    }));
+  }
+  function handlePartSelect(itemId: number, part: SearchablePart) {
+    setItems((prev) => prev.map((i) => {
+      if (i.id !== itemId) return i;
+      return { ...i, partId: String(part.id), partName: part.name, unitPrice: String(part.purchasePrice ?? part.salePrice) };
     }));
   }
 
@@ -252,9 +289,10 @@ export default function PurchasesPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
+      toast("Purchase created", "success");
       setShowModal(false);
       setVendorId(""); setNote("");
-      setItems([{ id: itemId++, partId: "", quantity: "", unitPrice: "" }]);
+      setItems([{ id: itemIdRef.current++, partId: "", partName: "", quantity: "", unitPrice: "" }]);
       fetchAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create purchase");
@@ -278,23 +316,148 @@ export default function PurchasesPage() {
         setVendorId(String(v.id));
         setShowVendorModal(false);
         setVendorName(""); setVendorPhone(""); setVendorAddress("");
+        toast("Vendor added", "success");
       }
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      toast("Failed to add vendor", "error");
+    }
   }
 
 
-  const statusColor: Record<string, string> = {
-    received: "bg-green-100 text-green-700",
-    in_transit: "bg-yellow-100 text-yellow-700",
-    ordered: "bg-blue-100 text-blue-700",
-  };
-  const statusLabel: Record<string, string> = {
-    received: "Received",
-    in_transit: "In Transit",
-    ordered: "Ordered",
-  };
+  const statusColor = PURCHASE_STATUS_COLOR;
+  const statusLabel = PURCHASE_STATUS_LABEL;
 
-  const inputClass = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500";
+  async function handleStatusChange(purchaseId: number, newStatus: string) {
+    const po = purchases.find((p) => p.id === purchaseId);
+    if (!po) return;
+
+    if (newStatus === "received") {
+      // Open receive review modal so admin can adjust quantities
+      setReceiveItems(po.items.map((i) => {
+        const currentPart = parts.find((p) => p.id === i.partId);
+        return {
+          partId: i.partId,
+          partName: i.part.name,
+          partNumber: i.part.partNumber,
+          orderedQty: i.quantity,
+          orderedPrice: Math.round(Number(i.unitPrice)),
+          currentPurchasePrice: currentPart ? Math.round(Number(currentPart.purchasePrice)) : 0,
+          quantity: i.quantity,
+          unitPrice: Math.round(Number(i.unitPrice)),
+        };
+      }));
+      setReceiveModalPO(po);
+      return;
+    }
+
+    // For non-received transitions, show confirmation
+    setPendingStatusChange({ id: purchaseId, status: newStatus });
+  }
+
+  async function confirmStatusChange() {
+    if (!pendingStatusChange) return;
+    setStatusChangeLoading(true);
+    try {
+      const res = await fetch(`/api/purchases/${pendingStatusChange.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: pendingStatusChange.status }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      toast(`Status updated to ${pendingStatusChange.status.replace("_", " ")}`, "success");
+      fetchAll();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to update status", "error");
+    } finally {
+      setStatusChangeLoading(false);
+      setPendingStatusChange(null);
+    }
+  }
+
+  async function confirmReceive() {
+    if (!receiveModalPO) return;
+    const validItems = receiveItems.filter((i) => i.quantity > 0);
+    if (validItems.length === 0) {
+      toast("At least one item must have quantity > 0", "error");
+      return;
+    }
+    setReceiveLoading(true);
+    try {
+      const res = await fetch(`/api/purchases/${receiveModalPO.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "received",
+          items: validItems.map((i) => ({
+            partId: i.partId,
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      toast("Purchase received — stock updated!", "success");
+      setReceiveModalPO(null);
+      fetchAll();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to receive purchase", "error");
+    } finally {
+      setReceiveLoading(false);
+    }
+  }
+
+  function openDetail(po: Purchase) {
+    setDetailPO(po);
+    setIsEditing(false);
+    setEditItems(po.items.map((i) => {
+      const currentPart = parts.find((p) => p.id === i.partId);
+      return {
+        partId: i.partId,
+        partName: i.part.name,
+        partNumber: i.part.partNumber,
+        orderedQty: i.quantity,
+        orderedPrice: Math.round(Number(i.unitPrice)),
+        currentPurchasePrice: currentPart ? Math.round(Number(currentPart.purchasePrice)) : 0,
+        quantity: i.quantity,
+        unitPrice: Math.round(Number(i.unitPrice)),
+      };
+    }));
+  }
+
+  async function saveEditItems() {
+    if (!detailPO) return;
+    const validItems = editItems.filter((i) => i.quantity > 0);
+    if (validItems.length === 0) {
+      toast("At least one item must have quantity > 0", "error");
+      return;
+    }
+    setEditLoading(true);
+    try {
+      const res = await fetch(`/api/purchases/${detailPO.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: validItems.map((i) => ({
+            partId: i.partId,
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      toast("Purchase items updated", "success");
+      setDetailPO(null);
+      fetchAll();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to update items", "error");
+    } finally {
+      setEditLoading(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     return purchases.filter((p) => {
@@ -367,28 +530,53 @@ export default function PurchasesPage() {
               <th className="text-left text-xs font-medium text-gray-500 uppercase px-6 py-3">Total</th>
               <th className="text-left text-xs font-medium text-gray-500 uppercase px-6 py-3">Date</th>
               <th className="text-left text-xs font-medium text-gray-500 uppercase px-6 py-3">Status</th>
+              <th className="text-left text-xs font-medium text-gray-500 uppercase px-6 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="px-6 py-12 text-center">
+              <tr><td colSpan={7} className="px-6 py-12 text-center">
                 <RefreshCw className="w-6 h-6 text-gray-300 mx-auto mb-2 animate-spin" />
                 <p className="text-sm text-gray-500">Loading...</p>
               </td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={6} className="px-6 py-12 text-center text-sm text-gray-400">{purchases.length > 0 ? "No purchases match filters" : "No purchases yet"}</td></tr>
+              <tr><td colSpan={7} className="px-6 py-12 text-center text-sm text-gray-400">{purchases.length > 0 ? "No purchases match filters" : "No purchases yet"}</td></tr>
             ) : (
               filtered.map((po) => (
-                <tr key={po.id} className="border-b border-gray-100 hover:bg-gray-50">
+                <tr key={po.id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => openDetail(po)}>
                   <td className="px-6 py-4 text-sm text-gray-500">PO{String(po.id).padStart(3, "0")}</td>
                   <td className="px-6 py-4 text-sm font-medium text-gray-900">{po.vendor.name}</td>
                   <td className="px-6 py-4 text-sm text-gray-500 max-w-[200px] truncate">{po.items.map((i) => `${i.part.name} x${i.quantity}`).join(", ")}</td>
                   <td className="px-6 py-4 text-sm font-semibold text-gray-900">{fmtRs(po.total)}</td>
                   <td className="px-6 py-4 text-sm text-gray-500">{new Date(po.createdAt).toLocaleDateString()}</td>
-                  <td className="px-6 py-4">
-                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusColor[po.status] || "bg-gray-100 text-gray-700"}`}>
-                      {statusLabel[po.status] || po.status}
-                    </span>
+                  <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                    {po.status === "received" ? (
+                      <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusColor[po.status]}`}>
+                        {statusLabel[po.status]}
+                      </span>
+                    ) : (
+                      <select
+                        value={po.status}
+                        onChange={(e) => handleStatusChange(po.id, e.target.value)}
+                        className={`text-xs font-medium px-2 py-1 rounded-full border-0 cursor-pointer ${statusColor[po.status] || "bg-gray-100 text-gray-700"}`}
+                      >
+                        <option value="ordered">Ordered</option>
+                        <option value="in_transit">In Transit</option>
+                        <option value="received">Received ✓</option>
+                      </select>
+                    )}
+                  </td>
+                  <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => openDetail(po)} className="p-1 text-gray-400 hover:text-blue-600" title="View details">
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      {po.status !== "received" && (
+                        <button onClick={() => { openDetail(po); setIsEditing(true); }} className="p-1 text-gray-400 hover:text-red-600" title="Edit items">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
@@ -431,17 +619,42 @@ export default function PurchasesPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Items</label>
             <div className="space-y-2">
-              {items.map((item) => (
-                <div key={item.id} className="flex gap-2">
-                  <select value={item.partId} onChange={(e) => updateItem(item.id, "partId", e.target.value)} className="flex-1 px-2 py-2 border border-gray-200 rounded-lg text-sm">
-                    <option value="">Select Part</option>
-                    {parts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                  <IntegerInput value={item.quantity} onChange={(v) => updateItem(item.id, "quantity", v)} className="w-20 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Qty" />
-                  <IntegerInput value={item.unitPrice} onChange={(v) => updateItem(item.id, "unitPrice", v)} className="w-28 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Price" />
-                  <button type="button" onClick={() => removeItem(item.id)} className="px-2 text-gray-400 hover:text-red-500">✕</button>
+              {items.map((item) => {
+                const selectedExcludeIds = new Set(items.filter((i) => i.id !== item.id && i.partId).map((i) => Number(i.partId)));
+                const currentPart = item.partId ? parts.find((p) => p.id === Number(item.partId)) : null;
+                const priceDiff = currentPart && item.unitPrice ? Math.round(parseFloat(item.unitPrice)) - currentPart.purchasePrice : 0;
+                return (
+                <div key={item.id} className="flex gap-2 items-start">
+                  <div className="flex-1">
+                    {item.partId ? (
+                      <div className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-sm">
+                        <span className="font-medium text-gray-900 truncate">{item.partName}</span>
+                        <button type="button" onClick={() => { updateItem(item.id, "partId", ""); updateItem(item.id, "partName", ""); }} className="ml-auto text-gray-400 hover:text-red-500 shrink-0">✕</button>
+                      </div>
+                    ) : (
+                      <SmartPartSearch
+                        parts={parts as SearchablePart[]}
+                        excludeIds={selectedExcludeIds}
+                        onSelect={(p) => handlePartSelect(item.id, p)}
+                        placeholder="Search part..."
+                        includeZeroStock
+                        showPurchasePrice
+                      />
+                    )}
+                  </div>
+                  <IntegerInput value={item.quantity} onChange={(v) => updateItem(item.id, "quantity", v)} className="w-16 px-2 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Qty" showStepper min={0} />
+                  <div className="relative">
+                    <IntegerInput value={item.unitPrice} onChange={(v) => updateItem(item.id, "unitPrice", v)} className={`w-28 px-2 py-2 border rounded-lg text-sm ${priceDiff > 0 ? "border-red-300 bg-red-50" : priceDiff < 0 ? "border-green-300 bg-green-50" : "border-gray-200"}`} placeholder="Price" />
+                    {currentPart && priceDiff !== 0 && (
+                      <span className={`absolute -top-2 right-1 text-[10px] font-medium px-1 rounded ${priceDiff > 0 ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"}`}>
+                        {priceDiff > 0 ? "+" : ""}{priceDiff}
+                      </span>
+                    )}
+                  </div>
+                  <button type="button" onClick={() => removeItem(item.id)} className="px-2 py-2 text-gray-400 hover:text-red-500">✕</button>
                 </div>
-              ))}
+                );
+              })}
             </div>
             <button type="button" onClick={addItem} className="mt-2 text-sm text-red-600 hover:text-red-700 font-medium">+ Add Item</button>
           </div>
@@ -651,6 +864,254 @@ export default function PurchasesPage() {
           </div>
         )}
       </Modal>
+
+      {/* Receive Review Modal */}
+      <Modal open={!!receiveModalPO} onClose={() => !receiveLoading && setReceiveModalPO(null)} title={`Receive PO${receiveModalPO ? String(receiveModalPO.id).padStart(3, "0") : ""} — Review Items`} wide>
+        {receiveModalPO && (
+          <div className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+              ⚠️ Receiving this order will <strong>add items to stock</strong> and <strong>update purchase prices</strong>. Review quantities and prices below &mdash; adjust if actual received amounts differ from the order.
+            </div>
+
+            <div className="flex gap-4 text-sm text-gray-600">
+              <span><strong>Vendor:</strong> {receiveModalPO.vendor.name}</span>
+              <span><strong>Date:</strong> {new Date(receiveModalPO.createdAt).toLocaleDateString()}</span>
+            </div>
+
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="text-left px-4 py-2 font-medium text-gray-600">Part</th>
+                    <th className="text-center px-4 py-2 font-medium text-gray-600 w-24">Ordered</th>
+                    <th className="text-center px-4 py-2 font-medium text-gray-600 w-28">Received Qty</th>
+                    <th className="text-center px-4 py-2 font-medium text-gray-600 w-24">Order Price</th>
+                    <th className="text-center px-4 py-2 font-medium text-gray-600 w-24">Last Price</th>
+                    <th className="text-center px-4 py-2 font-medium text-gray-600 w-28">Receive Price</th>
+                    <th className="text-right px-4 py-2 font-medium text-gray-600 w-24">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {receiveItems.map((item, idx) => {
+                    const priceDiffFromLast = item.unitPrice - item.currentPurchasePrice;
+                    return (
+                    <tr key={item.partId} className={item.quantity === 0 ? "bg-red-50/50" : item.quantity < item.orderedQty ? "bg-amber-50/50" : ""}>
+                      <td className="px-4 py-2">
+                        <div className="font-medium text-gray-900">{item.partName}</div>
+                        <div className="text-xs text-gray-400">{item.partNumber}</div>
+                      </td>
+                      <td className="text-center px-4 py-2 text-gray-500 font-mono">{item.orderedQty}</td>
+                      <td className="text-center px-4 py-2">
+                        <IntegerInput
+                          value={String(item.quantity)}
+                          onChange={(v) => {
+                            const val = Math.max(0, parseInt(v) || 0);
+                            setReceiveItems((prev) => prev.map((ri, i) => i === idx ? { ...ri, quantity: val } : ri));
+                          }}
+                          className={`w-20 mx-auto px-2 py-1 border rounded-lg text-sm text-center ${item.quantity !== item.orderedQty ? "border-amber-300 bg-amber-50" : "border-gray-200"}`}
+                          showStepper
+                          min={0}
+                        />
+                      </td>
+                      <td className="text-center px-4 py-2 text-gray-400 text-xs">{fmtRs(item.orderedPrice)}</td>
+                      <td className="text-center px-4 py-2 text-gray-400 text-xs">{item.currentPurchasePrice > 0 ? fmtRs(item.currentPurchasePrice) : "—"}</td>
+                      <td className="text-center px-4 py-2">
+                        <div className="relative inline-block">
+                          <IntegerInput
+                            value={String(item.unitPrice)}
+                            onChange={(v) => {
+                              const val = Math.max(0, parseInt(v) || 0);
+                              setReceiveItems((prev) => prev.map((ri, i) => i === idx ? { ...ri, unitPrice: val } : ri));
+                            }}
+                            className={`w-24 mx-auto px-2 py-1 border rounded-lg text-sm text-center ${priceDiffFromLast > 0 ? "border-red-300 bg-red-50" : priceDiffFromLast < 0 ? "border-green-300 bg-green-50" : "border-gray-200"}`}
+                          />
+                          {item.currentPurchasePrice > 0 && priceDiffFromLast !== 0 && (
+                            <span className={`absolute -top-2 -right-2 text-[10px] font-medium px-1 rounded ${priceDiffFromLast > 0 ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"}`}>
+                              {priceDiffFromLast > 0 ? "+" : ""}{priceDiffFromLast}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="text-right px-4 py-2 font-semibold text-gray-900">{fmtRs(item.quantity * item.unitPrice)}</td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-gray-50 border-t border-gray-200">
+                    <td colSpan={3} className="px-4 py-2 text-sm text-gray-500">
+                      {receiveItems.filter((i) => i.quantity > 0).length} of {receiveItems.length} items received
+                    </td>
+                    <td colSpan={3} className="px-4 py-2 text-right text-sm font-medium text-gray-700">Grand Total:</td>
+                    <td className="px-4 py-2 text-right text-base font-bold text-gray-900">
+                      {fmtRs(receiveItems.reduce((s, i) => s + i.quantity * i.unitPrice, 0))}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            {receiveItems.some((i) => i.quantity !== i.orderedQty) && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-xs text-blue-700">
+                Quantities differ from order: {receiveItems.filter((i) => i.quantity < i.orderedQty).length > 0 && `${receiveItems.filter((i) => i.quantity < i.orderedQty).length} item(s) short`}
+                {receiveItems.filter((i) => i.quantity > i.orderedQty).length > 0 && ` · ${receiveItems.filter((i) => i.quantity > i.orderedQty).length} item(s) extra`}
+                {receiveItems.filter((i) => i.quantity === 0).length > 0 && ` · ${receiveItems.filter((i) => i.quantity === 0).length} item(s) not received`}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button onClick={() => setReceiveModalPO(null)} disabled={receiveLoading} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50">Cancel</button>
+              <button onClick={confirmReceive} disabled={receiveLoading} className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2">
+                {receiveLoading && <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>}
+                <CheckCircle className="w-4 h-4" />
+                Confirm Receive &amp; Update Stock
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Detail / Edit Modal */}
+      <Modal open={!!detailPO} onClose={() => !editLoading && setDetailPO(null)} title={`PO${detailPO ? String(detailPO.id).padStart(3, "0") : ""} — ${detailPO ? detailPO.vendor.name : ""}`} wide>
+        {detailPO && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-4 text-sm">
+              <div><span className="text-gray-500">Status:</span> <span className={`ml-1 text-xs font-medium px-2 py-0.5 rounded-full ${statusColor[detailPO.status] || "bg-gray-100"}`}>{statusLabel[detailPO.status] || detailPO.status}</span></div>
+              <div><span className="text-gray-500">Date:</span> <span className="ml-1 font-medium">{new Date(detailPO.createdAt).toLocaleDateString()}</span></div>
+              <div><span className="text-gray-500">Total:</span> <span className="ml-1 font-bold">{fmtRs(detailPO.total)}</span></div>
+              {detailPO.note && <div><span className="text-gray-500">Note:</span> <span className="ml-1">{detailPO.note}</span></div>}
+            </div>
+
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="text-left px-4 py-2 font-medium text-gray-600">Part</th>
+                    <th className="text-center px-4 py-2 font-medium text-gray-600 w-28">Quantity</th>
+                    <th className="text-center px-4 py-2 font-medium text-gray-600 w-24">Last Price</th>
+                    <th className="text-center px-4 py-2 font-medium text-gray-600 w-28">Unit Price</th>
+                    <th className="text-right px-4 py-2 font-medium text-gray-600 w-24">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {isEditing && detailPO.status !== "received" ? (
+                    editItems.map((item, idx) => {
+                      const priceDiff = item.unitPrice - item.currentPurchasePrice;
+                      return (
+                      <tr key={item.partId}>
+                        <td className="px-4 py-2">
+                          <div className="font-medium text-gray-900">{item.partName}</div>
+                          <div className="text-xs text-gray-400">{item.partNumber}</div>
+                        </td>
+                        <td className="text-center px-4 py-2">
+                          <IntegerInput
+                            value={String(item.quantity)}
+                            onChange={(v) => {
+                              const val = Math.max(0, parseInt(v) || 0);
+                              setEditItems((prev) => prev.map((ei, i) => i === idx ? { ...ei, quantity: val } : ei));
+                            }}
+                            className="w-20 mx-auto px-2 py-1 border border-gray-200 rounded-lg text-sm text-center"
+                            showStepper
+                            min={0}
+                          />
+                        </td>
+                        <td className="text-center px-4 py-2 text-gray-400 text-xs">{item.currentPurchasePrice > 0 ? fmtRs(item.currentPurchasePrice) : "—"}</td>
+                        <td className="text-center px-4 py-2">
+                          <div className="relative inline-block">
+                            <IntegerInput
+                              value={String(item.unitPrice)}
+                              onChange={(v) => {
+                                const val = Math.max(0, parseInt(v) || 0);
+                                setEditItems((prev) => prev.map((ei, i) => i === idx ? { ...ei, unitPrice: val } : ei));
+                              }}
+                              className={`w-24 mx-auto px-2 py-1 border rounded-lg text-sm text-center ${priceDiff > 0 ? "border-red-300 bg-red-50" : priceDiff < 0 ? "border-green-300 bg-green-50" : "border-gray-200"}`}
+                            />
+                            {item.currentPurchasePrice > 0 && priceDiff !== 0 && (
+                              <span className={`absolute -top-2 -right-2 text-[10px] font-medium px-1 rounded ${priceDiff > 0 ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"}`}>
+                                {priceDiff > 0 ? "+" : ""}{priceDiff}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="text-right px-4 py-2 font-semibold text-gray-900">{fmtRs(item.quantity * item.unitPrice)}</td>
+                      </tr>
+                      );
+                    })
+                  ) : (
+                    detailPO.items.map((item) => {
+                      const currentPart = parts.find((p) => p.id === item.partId);
+                      const lastPrice = currentPart ? Math.round(Number(currentPart.purchasePrice)) : 0;
+                      const priceDiff = Math.round(Number(item.unitPrice)) - lastPrice;
+                      return (
+                      <tr key={item.id}>
+                        <td className="px-4 py-2">
+                          <div className="font-medium text-gray-900">{item.part.name}</div>
+                          <div className="text-xs text-gray-400">{item.part.partNumber}</div>
+                        </td>
+                        <td className="text-center px-4 py-2 font-mono">{item.quantity}</td>
+                        <td className="text-center px-4 py-2 text-gray-400 text-xs">{lastPrice > 0 ? fmtRs(lastPrice) : "—"}</td>
+                        <td className="text-center px-4 py-2">
+                          <span className="font-medium">{fmtRs(item.unitPrice)}</span>
+                          {lastPrice > 0 && priceDiff !== 0 && (
+                            <span className={`ml-1 text-[10px] font-medium px-1 rounded ${priceDiff > 0 ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"}`}>
+                              {priceDiff > 0 ? "+" : ""}{priceDiff}
+                            </span>
+                          )}
+                        </td>
+                        <td className="text-right px-4 py-2 font-semibold text-gray-900">{fmtRs(item.total)}</td>
+                      </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-gray-50 border-t border-gray-200">
+                    <td colSpan={4} className="px-4 py-2 text-right text-sm font-medium text-gray-700">Total:</td>
+                    <td className="px-4 py-2 text-right text-base font-bold text-gray-900">
+                      {isEditing && detailPO.status !== "received"
+                        ? fmtRs(editItems.reduce((s, i) => s + i.quantity * i.unitPrice, 0))
+                        : fmtRs(detailPO.total)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              {isEditing && detailPO.status !== "received" ? (
+                <>
+                  <button onClick={() => setIsEditing(false)} disabled={editLoading} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50">Cancel Edit</button>
+                  <button onClick={saveEditItems} disabled={editLoading} className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center gap-2">
+                    {editLoading && <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>}
+                    Save Changes
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => setDetailPO(null)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Close</button>
+                  {detailPO.status !== "received" && (
+                    <button onClick={() => setIsEditing(true)} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 flex items-center gap-2">
+                      <Pencil className="w-4 h-4" />
+                      Edit Items
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Status Change Confirmation */}
+      <ConfirmDialog
+        open={!!pendingStatusChange}
+        title="Change Status"
+        message={`Change this purchase to "${pendingStatusChange?.status.replace("_", " ")}"?`}
+        confirmLabel="Confirm"
+        loading={statusChangeLoading}
+        onConfirm={confirmStatusChange}
+        onCancel={() => setPendingStatusChange(null)}
+      />
     </>
   );
 }

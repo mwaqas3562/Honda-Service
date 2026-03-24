@@ -12,40 +12,55 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     if (isNaN(id)) return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
 
     const body = await req.json();
-    const data: Record<string, unknown> = {};
-    if (body.status) data.status = body.status;
-    if (body.note !== undefined) data.note = body.note?.trim() || null;
 
-    // If laborCost is being updated, recalculate total
-    if (body.laborCost !== undefined) {
-      const newLaborCost = Math.max(0, Number(body.laborCost) || 0);
-      data.laborCost = newLaborCost;
-
-      // Get current service items to recalculate total
-      const current = await prisma.service.findUnique({
+    const service = await prisma.$transaction(async (tx) => {
+      const current = await tx.service.findUnique({
         where: { id },
         include: { items: true },
       });
-      if (!current) return NextResponse.json({ error: "Service not found" }, { status: 404 });
+      if (!current) throw new Error("NOT_FOUND");
+      if (current.status === "completed" && body.status !== "completed") {
+        throw new Error("COMPLETED");
+      }
 
-      const partsTotal = current.items.reduce((sum, item) => sum + n(item.total), 0);
-      data.total = round2(partsTotal + newLaborCost);
-    }
+      const data: Record<string, unknown> = {};
+      if (body.status) {
+        const VALID_SERVICE_STATUSES = ["pending", "in_progress", "completed"];
+        if (!VALID_SERVICE_STATUSES.includes(body.status)) {
+          throw new Error("INVALID_STATUS");
+        }
+        data.status = body.status;
+      }
+      if (body.note !== undefined) data.note = body.note?.trim() || null;
 
-    const service = await prisma.service.update({
-      where: { id },
-      data,
-      include: { items: { include: { part: true } } },
+      // If laborCost is being updated, recalculate total atomically
+      if (body.laborCost !== undefined) {
+        const newLaborCost = Math.max(0, Number(body.laborCost) || 0);
+        data.laborCost = newLaborCost;
+        const partsTotal = current.items.reduce((sum, item) => sum + n(item.total), 0);
+        data.total = round2(partsTotal + newLaborCost);
+      }
+
+      return tx.service.update({
+        where: { id },
+        data,
+        include: { items: { include: { part: true } } },
+      });
     });
 
     return NextResponse.json(service);
   } catch (error) {
     console.error("PUT /api/services error:", error);
+    if (error instanceof Error) {
+      if (error.message === "NOT_FOUND") return NextResponse.json({ error: "Service not found" }, { status: 404 });
+      if (error.message === "COMPLETED") return NextResponse.json({ error: "Cannot edit a completed service" }, { status: 403 });
+      if (error.message === "INVALID_STATUS") return NextResponse.json({ error: "Invalid status. Must be one of: pending, in_progress, completed" }, { status: 400 });
+    }
     return NextResponse.json({ error: "Failed to update service" }, { status: 500 });
   }
 }
 
-// DELETE /api/services/[id] — cancel service and reverse stock deductions
+// DELETE /api/services/[id] — soft-delete service and reverse stock deductions
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
   try {
     const { id: rawId } = await params;
@@ -85,9 +100,8 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
         });
       }
 
-      // Delete service items then service
-      await tx.serviceItem.deleteMany({ where: { serviceId: id } });
-      await tx.service.delete({ where: { id } });
+      // Soft-delete: set deletedAt instead of removing records
+      await tx.service.update({ where: { id }, data: { deletedAt: new Date() } });
     });
 
     return NextResponse.json({ success: true });

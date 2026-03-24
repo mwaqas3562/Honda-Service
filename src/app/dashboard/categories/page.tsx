@@ -11,6 +11,8 @@ interface Subcategory {
   name: string;
 }
 
+import { inputClass } from "@/lib/constants";
+
 interface Category {
   id: number;
   name: string;
@@ -23,6 +25,7 @@ export default function CategoriesPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<{ type: "category"; id: number; name: string } | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   // Add form
   const [catName, setCatName] = useState("");
@@ -33,16 +36,16 @@ export default function CategoriesPage() {
   const [addSubFor, setAddSubFor] = useState<number | null>(null);
   const [newSubName, setNewSubName] = useState("");
 
-  const fetchCategories = useCallback(async () => {
+  const fetchCategories = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/categories");
+      const res = await fetch("/api/categories", { signal });
       if (res.ok) setCategories(await res.json());
-    } catch (err) { console.error(err); }
+    } catch (err) { if (err instanceof Error && err.name === "AbortError") return; console.error(err); }
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchCategories(); }, [fetchCategories]);
+  useEffect(() => { const c = new AbortController(); fetchCategories(c.signal); return () => c.abort(); }, [fetchCategories]);
 
   function toggleExpand(id: number) {
     setExpanded((prev) => {
@@ -89,14 +92,14 @@ export default function CategoriesPage() {
 
   async function handleDelete() {
     if (!deleteTarget) return;
+    setActionLoading(true);
     try {
       await fetch(`/api/categories/${deleteTarget.id}`, { method: "DELETE" });
       fetchCategories();
     } catch (err) { console.error(err); }
     setDeleteTarget(null);
+    setActionLoading(false);
   }
-
-  const inputClass = "w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500";
 
   return (
     <>
@@ -192,6 +195,7 @@ export default function CategoriesPage() {
         open={!!deleteTarget}
         title="Delete Category"
         message={deleteTarget ? `Delete "${deleteTarget.name}" and all its subcategories?` : ""}
+        loading={actionLoading}
         onConfirm={handleDelete}
         onCancel={() => setDeleteTarget(null)}
       />

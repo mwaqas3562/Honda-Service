@@ -23,12 +23,13 @@ export async function GET(req: NextRequest) {
       ? new Date(toParam + "T23:59:59Z")
       : new Date(Date.UTC(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59));
 
-    // Parallel: fetch all sales with items + labour, job card info, and expenses
-    const [sales, expenseAgg] = await Promise.all([
+    // Parallel: fetch finalized sales + services + expenses
+    const [sales, services, expenseAgg] = await Promise.all([
       prisma.sale.findMany({
-        where: { createdAt: { gte: from, lte: to } },
+        where: { status: "final", createdAt: { gte: from, lte: to } },
         select: {
           id: true,
+          saleType: true,
           customer: true,
           total: true,
           discount: true,
@@ -52,6 +53,24 @@ export async function GET(req: NextRequest) {
         },
         orderBy: { createdAt: "asc" },
       }),
+      prisma.service.findMany({
+        where: { createdAt: { gte: from, lte: to } },
+        select: {
+          id: true,
+          customerName: true,
+          total: true,
+          laborCost: true,
+          createdAt: true,
+          items: {
+            select: {
+              quantity: true,
+              total: true,
+              part: { select: { purchasePrice: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "asc" },
+      }),
       prisma.expense.aggregate({
         where: { date: { gte: from, lte: to } },
         _sum: { amount: true },
@@ -60,7 +79,7 @@ export async function GET(req: NextRequest) {
 
     const totalExpenses = n(expenseAgg._sum.amount);
 
-    // Build invoice rows
+    // Build invoice rows from finalized sales
     const invoices = sales.map((sale) => {
       const labour = sale.labourItems.reduce((sum, li) => sum + n(li.total), 0);
       const partsTotal = sale.items.reduce((sum, item) => sum + n(item.total), 0);
@@ -71,11 +90,12 @@ export async function GET(req: NextRequest) {
       const billAmount = n(sale.total);
       const discount = n(sale.discount);
       const profit = round2(billAmount - cost);
+      const isQS = sale.saleType === "quick_service";
 
       return {
         id: sale.id,
         date: sale.createdAt.toISOString(),
-        jobNo: sale.jobCard?.jobCardNumber || null,
+        jobNo: sale.jobCard?.jobCardNumber || (isQS ? `QS-${sale.id}` : null),
         customer: sale.customer || "Walk-in Customer",
         labour: round2(labour),
         parts: round2(partsTotal),
@@ -85,6 +105,34 @@ export async function GET(req: NextRequest) {
         profit,
       };
     });
+
+    // Add old Service table records
+    for (const svc of services) {
+      const partsTotal = svc.items.reduce((sum, item) => sum + n(item.total), 0);
+      const cost = svc.items.reduce(
+        (sum, item) => sum + item.quantity * n(item.part.purchasePrice),
+        0
+      );
+      const billAmount = n(svc.total);
+      const labour = n(svc.laborCost);
+      const profit = round2(billAmount - cost);
+
+      invoices.push({
+        id: svc.id,
+        date: svc.createdAt.toISOString(),
+        jobNo: `SVC-${svc.id}`,
+        customer: svc.customerName || "Walk-in Customer",
+        labour: round2(labour),
+        parts: round2(partsTotal),
+        discount: 0,
+        billAmount: round2(billAmount),
+        cost: round2(cost),
+        profit,
+      });
+    }
+
+    // Re-sort by date after merging
+    invoices.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     // Grand totals (pre-aggregated — no frontend recalc needed)
     const totals = {

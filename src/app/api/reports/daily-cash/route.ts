@@ -231,12 +231,12 @@ export async function POST(req: NextRequest) {
     const dayEnd = new Date(date + "T23:59:59Z");
 
     const [salesAgg, servicesAgg, purchasesAgg, expensesData, onlineSales] = await Promise.all([
-      prisma.sale.aggregate({ where: { createdAt: { gte: dayStart, lte: dayEnd } }, _sum: { total: true } }),
+      prisma.sale.aggregate({ where: { status: "final", createdAt: { gte: dayStart, lte: dayEnd } }, _sum: { total: true } }),
       prisma.service.aggregate({ where: { createdAt: { gte: dayStart, lte: dayEnd } }, _sum: { total: true } }),
       prisma.purchase.aggregate({ where: { createdAt: { gte: dayStart, lte: dayEnd } }, _sum: { total: true } }),
       prisma.expense.findMany({ where: { date: { gte: dayStart, lte: dayEnd } }, select: { amount: true, type: true } }),
       prisma.sale.aggregate({
-        where: { createdAt: { gte: dayStart, lte: dayEnd }, paymentType: { in: ["card", "online"] } },
+        where: { status: "final", createdAt: { gte: dayStart, lte: dayEnd }, paymentType: { in: ["card", "online"] } },
         _sum: { total: true },
       }),
     ]);

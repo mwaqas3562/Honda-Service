@@ -102,13 +102,15 @@ export default function SalaryPage() {
   const [loading, setLoading] = useState(true);
   const [lockConfirm, setLockConfirm] = useState(false);
   const [unlockConfirm, setUnlockConfirm] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
-  const fetchSalary = useCallback(async () => {
+  const fetchSalary = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/salary?month=${month}`);
+      const res = await fetch(`/api/salary?month=${month}`, { signal });
       if (res.ok) setData(await res.json());
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error("Failed to fetch salary:", err);
     } finally {
       setLoading(false);
@@ -116,10 +118,13 @@ export default function SalaryPage() {
   }, [month]);
 
   useEffect(() => {
-    fetchSalary();
+    const c = new AbortController();
+    fetchSalary(c.signal);
+    return () => c.abort();
   }, [fetchSalary]);
 
   async function handleLock() {
+    setActionLoading(true);
     try {
       const res = await fetch("/api/salary/lock", {
         method: "POST",
@@ -137,10 +142,12 @@ export default function SalaryPage() {
       toast("Failed to lock", "error");
     } finally {
       setLockConfirm(false);
+      setActionLoading(false);
     }
   }
 
   async function handleUnlock() {
+    setActionLoading(true);
     try {
       const res = await fetch(`/api/salary/lock?month=${month}`, { method: "DELETE" });
       if (res.ok) {
@@ -154,6 +161,7 @@ export default function SalaryPage() {
       toast("Failed to unlock", "error");
     } finally {
       setUnlockConfirm(false);
+      setActionLoading(false);
     }
   }
 
@@ -363,6 +371,7 @@ export default function SalaryPage() {
         title="Lock Month"
         message={`Lock ${getMonthLabel(month)}? No attendance or advance changes will be allowed once locked.`}
         confirmLabel="Lock"
+        loading={actionLoading}
         onConfirm={handleLock}
         onCancel={() => setLockConfirm(false)}
       />
@@ -371,6 +380,7 @@ export default function SalaryPage() {
         title="Unlock Month"
         message={`Unlock ${getMonthLabel(month)}? This will allow editing attendance and advances again.`}
         confirmLabel="Unlock"
+        loading={actionLoading}
         onConfirm={handleUnlock}
         onCancel={() => setUnlockConfirm(false)}
       />

@@ -32,16 +32,16 @@ export default function StockLogsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterType>("all");
 
-  const fetchLogs = useCallback(async () => {
+  const fetchLogs = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/stock-logs?limit=200");
+      const res = await fetch("/api/stock-logs?limit=200", { signal });
       if (res.ok) setAllLogs(await res.json());
-    } catch (err) { console.error(err); }
+    } catch (err) { if (err instanceof Error && err.name === "AbortError") return; console.error(err); }
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchLogs(); }, [fetchLogs]);
+  useEffect(() => { const c = new AbortController(); fetchLogs(c.signal); return () => c.abort(); }, [fetchLogs]);
 
   const logs = filter === "all" ? allLogs : allLogs.filter((l) => getDirection(l.type) === filter);
 

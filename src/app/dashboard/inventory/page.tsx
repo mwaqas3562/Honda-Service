@@ -56,6 +56,8 @@ export default function InventoryPage() {
   const [lowStockParts, setLowStockParts] = useState<Part[]>([]);
   const [stockSummary, setStockSummary] = useState<{ rows: StockSummaryRow[]; message: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Part | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const [showReorderModal, setShowReorderModal] = useState(false);
   const [reorderSuggestions, setReorderSuggestions] = useState<ReorderSuggestion[]>([]);
   const [reorderLoading, setReorderLoading] = useState(false);
@@ -83,42 +85,48 @@ export default function InventoryPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  const fetchParts = useCallback(async () => {
+  const fetchParts = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (category) params.set("category", category);
-      const res = await fetch(`/api/parts?${params.toString()}`);
+      const res = await fetch(`/api/parts?${params.toString()}`, { signal });
       if (res.ok) {
         const json = await res.json();
         setParts(json.data ?? json);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error("Failed to fetch parts:", err);
     } finally {
       setLoading(false);
     }
   }, [debouncedSearch, category]);
 
-  const fetchLowStock = useCallback(async () => {
+  const fetchLowStock = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch("/api/parts/low-stock");
+      const res = await fetch("/api/parts/low-stock", { signal });
       if (res.ok) {
         const data = await res.json();
         setLowStockParts(data);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error("Failed to fetch low stock:", err);
     }
   }, []);
 
   useEffect(() => {
-    fetchParts();
+    const c = new AbortController();
+    fetchParts(c.signal);
+    return () => c.abort();
   }, [fetchParts]);
 
   useEffect(() => {
-    fetchLowStock();
+    const c = new AbortController();
+    fetchLowStock(c.signal);
+    return () => c.abort();
   }, [fetchLowStock]);
 
   const fetchReorderSuggestions = async () => {
@@ -222,6 +230,7 @@ export default function InventoryPage() {
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
+    setActionLoading(true);
     try {
       const res = await fetch(`/api/parts/${deleteTarget.id}`, { method: "DELETE" });
       if (res.ok) {
@@ -234,13 +243,15 @@ export default function InventoryPage() {
     } catch (err) {
       console.error("Failed to delete part:", err);
       toast("Failed to delete part", "error");
+    } finally {
+      setActionLoading(false);
     }
     setDeleteTarget(null);
   };
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Delete ${selectedIds.size} selected parts? This cannot be undone.`)) return;
+    setActionLoading(true);
     let deleted = 0;
     for (const id of Array.from(selectedIds)) {
       try {
@@ -250,6 +261,8 @@ export default function InventoryPage() {
     }
     toast(`Deleted ${deleted} of ${selectedIds.size} parts`, deleted > 0 ? "success" : "error");
     setSelectedIds(new Set());
+    setBulkDeleteConfirm(false);
+    setActionLoading(false);
     fetchParts();
     fetchLowStock();
   };
@@ -364,7 +377,7 @@ export default function InventoryPage() {
         <div className="flex items-center gap-3 mb-4 px-4 py-2.5 bg-red-50 border border-red-200 rounded-lg">
           <span className="text-sm font-medium text-red-700">{selectedIds.size} selected</span>
           <button
-            onClick={handleBulkDelete}
+            onClick={() => setBulkDeleteConfirm(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -486,8 +499,19 @@ export default function InventoryPage() {
         open={!!deleteTarget}
         title="Delete Part"
         message={deleteTarget ? `Are you sure you want to delete "${deleteTarget.name}"? This action cannot be undone.` : ""}
+        loading={actionLoading}
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      {/* Bulk Delete Confirmation */}
+      <ConfirmDialog
+        open={bulkDeleteConfirm}
+        title="Delete Selected Parts"
+        message={`Delete ${selectedIds.size} selected parts? This cannot be undone.`}
+        loading={actionLoading}
+        onConfirm={handleBulkDelete}
+        onCancel={() => setBulkDeleteConfirm(false)}
       />
 
       {/* Reorder Suggestions Modal */}

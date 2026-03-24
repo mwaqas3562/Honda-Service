@@ -241,7 +241,8 @@ export default function BonusRewardsPage() {
 
   // Fetch staff list
   useEffect(() => {
-    fetch("/api/staff?status=active")
+    const c = new AbortController();
+    fetch("/api/staff?status=active", { signal: c.signal })
       .then((r) => r.json())
       .then((d) =>
         setAllStaff(
@@ -250,7 +251,8 @@ export default function BonusRewardsPage() {
             : []
         )
       )
-      .catch(() => {});
+      .catch((err) => { if (err?.name !== "AbortError") {} });
+    return () => c.abort();
   }, []);
 
   // Close dropdowns on outside click
@@ -268,7 +270,7 @@ export default function BonusRewardsPage() {
   }, []);
 
   // Fetch data
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -286,9 +288,10 @@ export default function BonusRewardsPage() {
       if (roleFilter) params.set("role", roleFilter);
       if (bonusTypeFilter !== "all") params.set("bonusType", bonusTypeFilter);
 
-      const res = await fetch(`/api/bonus-reports?${params.toString()}`);
+      const res = await fetch(`/api/bonus-reports?${params.toString()}`, { signal });
       if (res.ok) setData(await res.json());
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error("Failed to fetch bonus reports:", err);
     } finally {
       setLoading(false);
@@ -296,7 +299,9 @@ export default function BonusRewardsPage() {
   }, [quickFilter, customFrom, customTo, staffFilter, roleFilter, bonusTypeFilter]);
 
   useEffect(() => {
-    fetchData();
+    const c = new AbortController();
+    fetchData(c.signal);
+    return () => c.abort();
   }, [fetchData]);
 
   // Recalculate all bonuses

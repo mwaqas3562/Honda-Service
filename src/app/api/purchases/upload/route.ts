@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { n } from "@/lib/utils";
+import { PurchaseStatus } from "@/generated/prisma/client";
 import * as XLSX from "xlsx";
 
 const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -120,7 +121,12 @@ export async function POST(req: NextRequest) {
 
     // ── IMPORT MODE ──
     const vendorId = vendorIdStr ? parseInt(vendorIdStr, 10) : null;
-    const purchaseStatus = statusVal || "received";
+    const purchaseStatus = (statusVal || "ordered") as PurchaseStatus;
+
+    const VALID_PURCHASE_STATUSES = ["ordered", "in_transit", "received"];
+    if (!VALID_PURCHASE_STATUSES.includes(purchaseStatus)) {
+      return NextResponse.json({ error: `Invalid status. Must be one of: ${VALID_PURCHASE_STATUSES.join(", ")}` }, { status: 400 });
+    }
 
     // Map raw rows
     const rows = rawRows.map((raw) => {

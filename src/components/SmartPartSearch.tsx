@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Search, Package } from "lucide-react";
-import Fuse, { type FuseResult as FuseResultType } from "fuse.js";
+import type { FuseResult as FuseResultType } from "fuse.js";
 
 export interface SearchablePart {
   id: number;
   name: string;
   partNumber: string;
+  purchasePrice?: number;
   salePrice: number;
   stock: number;
   aliases: string[];
@@ -20,6 +21,8 @@ interface SmartPartSearchProps {
   onSelect: (part: SearchablePart) => void;
   placeholder?: string;
   autoFocus?: boolean;
+  includeZeroStock?: boolean;
+  showPurchasePrice?: boolean;
 }
 
 type FResult = FuseResultType<SearchablePart>;
@@ -55,6 +58,8 @@ export default function SmartPartSearch({
   onSelect,
   placeholder = "Type part name, local name, or number...",
   autoFocus = false,
+  includeZeroStock = false,
+  showPurchasePrice = false,
 }: SmartPartSearchProps) {
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
@@ -65,8 +70,8 @@ export default function SmartPartSearch({
 
   // Top 10 most-used parts (default when no query)
   const available = useMemo(() => {
-    return parts.filter((p) => p.stock > 0 && !(excludeIds?.has(p.id)));
-  }, [parts, excludeIds]);
+    return parts.filter((p) => (includeZeroStock || p.stock > 0) && !(excludeIds?.has(p.id)));
+  }, [parts, excludeIds, includeZeroStock]);
   const topParts = useMemo(() => {
     return [...available].sort((a, b) => b.usageCount - a.usageCount).slice(0, 10);
   }, [available]);
@@ -74,7 +79,7 @@ export default function SmartPartSearch({
   // Remote search results from backend
   const [remoteParts, setRemoteParts] = useState<SearchablePart[]>([]);
   const [remoteLoading, setRemoteLoading] = useState(false);
-  const [remoteError, setRemoteError] = useState("");
+  const [, setRemoteError] = useState("");
 
   // Debounced search query
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -112,7 +117,7 @@ export default function SmartPartSearch({
       if (remoteLoading) return [];
       if (remoteParts.length > 0) {
         return remoteParts
-          .filter((p) => p.stock > 0 && !(excludeIds?.has(p.id)))
+          .filter((p) => (includeZeroStock || p.stock > 0) && !(excludeIds?.has(p.id)))
           .sort((a, b) => (b.usageCount || 0) - (a.usageCount || 0))
           .slice(0, 20)
           .map((item) => ({ item, score: undefined, matches: undefined, refIndex: 0 }));
@@ -121,7 +126,7 @@ export default function SmartPartSearch({
     }
     // No query → show top used as pseudo-results (no match highlighting)
     return topParts.map((item) => ({ item, score: undefined, matches: undefined, refIndex: 0 }));
-  }, [query, remoteParts, remoteLoading, topParts, excludeIds]);
+  }, [query, remoteParts, remoteLoading, topParts, excludeIds, includeZeroStock]);
 
   const noResults = query.trim().length > 0 && !remoteLoading && displayItems.length === 0;
 
@@ -270,8 +275,8 @@ export default function SmartPartSearch({
                   </div>
                 </div>
                 <div className="text-right ml-4 shrink-0">
-                  <div className="font-bold text-gray-900">Rs {Math.round(p.salePrice).toLocaleString()}</div>
-                  <div className={`text-xs mt-0.5 ${p.stock <= 3 ? "text-red-500 font-medium" : "text-gray-400"}`}>
+                  <div className="font-bold text-gray-900">Rs {Math.round(showPurchasePrice ? (p.purchasePrice ?? p.salePrice) : p.salePrice).toLocaleString()}</div>
+                  <div className={`text-xs mt-0.5 ${p.stock <= 0 ? "text-red-500 font-medium" : p.stock <= 3 ? "text-orange-500 font-medium" : "text-gray-400"}`}>
                     Stock: {p.stock}
                   </div>
                 </div>

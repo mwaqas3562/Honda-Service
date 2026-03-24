@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import {
   Search,
   Download,
@@ -11,9 +11,12 @@ import {
   ShoppingCart,
   Phone,
   Bike,
+  Calendar,
 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
 import { formatRs, formatDate, StatusBadge, LoadingSpinner } from "@/components/DrillDown";
+import { today, monthStart, getDatePresets, parseDateParams } from "@/lib/report-filters";
 
 /* ─── Types ───────────────────────────────── */
 
@@ -75,37 +78,52 @@ const customerTypeBadge: Record<string, { label: string; cls: string }> = {
 /* ─── Component ────────────────────────────── */
 
 export default function CustomersReportPage() {
+  return <Suspense fallback={<LoadingSpinner className="py-20" />}><CustomersReportContent /></Suspense>;
+}
+
+function CustomersReportContent() {
+  const sp = useSearchParams();
+  const urlDates = parseDateParams(sp, monthStart(), today());
+
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [summary, setSummary] = useState<CustSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState(urlDates.from);
+  const [dateTo, setDateTo] = useState(urlDates.to);
+  const [activePreset, setActivePreset] = useState(urlDates.fromUrl ? "" : "This Month");
+  const presets = getDatePresets();
 
   // Detail
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [expandedEntry, setExpandedEntry] = useState<number | null>(null);
 
-  const fetchCustomers = useCallback(async () => {
+  const fetchCustomers = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
-      const res = await fetch(`/api/reports/customers?${params}`);
+      if (dateFrom) params.set("from", dateFrom);
+      if (dateTo) params.set("to", dateTo);
+      const res = await fetch(`/api/reports/customers?${params}`, { signal });
       if (res.ok) {
         const data = await res.json();
         setCustomers(data.customers);
         setSummary(data.summary);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error(err);
     } finally {
       setLoading(false);
     }
-  }, [search]);
+  }, [search, dateFrom, dateTo]);
 
   useEffect(() => {
-    const t = setTimeout(fetchCustomers, 300);
-    return () => clearTimeout(t);
+    const c = new AbortController();
+    const t = setTimeout(() => fetchCustomers(c.signal), 300);
+    return () => { clearTimeout(t); c.abort(); };
   }, [fetchCustomers]);
 
   async function openDetail(customer: Customer) {
@@ -113,9 +131,10 @@ export default function CustomersReportPage() {
     setDetail(null);
     setExpandedEntry(null);
     try {
-      const res = await fetch(
-        `/api/reports/customers?name=${encodeURIComponent(customer.name)}`
-      );
+      const params = new URLSearchParams({ name: customer.name });
+      if (dateFrom) params.set("from", dateFrom);
+      if (dateTo) params.set("to", dateTo);
+      const res = await fetch(`/api/reports/customers?${params}`);
       if (res.ok) {
         setDetail(await res.json());
       }
@@ -294,6 +313,30 @@ export default function CustomersReportPage() {
           ) : undefined
         }
       />
+
+      {/* Date Filters */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <Calendar className="w-4 h-4" />
+            <span className="font-medium">Period:</span>
+          </div>
+          {presets.map((p) => (
+            <button key={p.label} onClick={() => { setDateFrom(p.from); setDateTo(p.to); setActivePreset(p.label); }}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                activePreset === p.label ? "bg-red-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >{p.label}</button>
+          ))}
+          <div className="flex items-center gap-2 ml-auto">
+            <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setActivePreset(""); }}
+              className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" />
+            <span className="text-gray-400 text-xs">to</span>
+            <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setActivePreset(""); }}
+              className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" />
+          </div>
+        </div>
+      </div>
 
       {/* Search */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">

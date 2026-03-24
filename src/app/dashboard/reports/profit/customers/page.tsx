@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Calendar,
@@ -14,7 +14,6 @@ import {
   ChevronDown,
   ArrowUpDown,
   Hammer,
-  DollarSign,
   Package,
   FileText,
 } from "lucide-react";
@@ -91,7 +90,7 @@ type Preset = { label: string; from: string; to: string };
 
 /* ─── Component ──────────────────────────────── */
 
-export default function CustomerProfitPage() {
+function CustomerProfitPageContent() {
   const { toast } = useToast();
   const sp = useSearchParams();
   const urlDates = parseDateParams(sp, monthStart(), today());
@@ -114,12 +113,12 @@ export default function CustomerProfitPage() {
 
   const presets = getDatePresets();
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setExpandedCustomer(null);
     try {
       const params = new URLSearchParams({ from: dateFrom, to: dateTo });
-      const res = await fetch(`/api/reports/profit/customers?${params}`);
+      const res = await fetch(`/api/reports/profit/customers?${params}`, { signal });
       if (res.ok) {
         const data = await res.json();
         setCustomers(data.customers);
@@ -127,7 +126,8 @@ export default function CustomerProfitPage() {
       } else {
         toast("Failed to load profit data", "error");
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       toast("Network error", "error");
     } finally {
       setLoading(false);
@@ -135,7 +135,9 @@ export default function CustomerProfitPage() {
   }, [dateFrom, dateTo, toast]);
 
   useEffect(() => {
-    fetchData();
+    const c = new AbortController();
+    fetchData(c.signal);
+    return () => c.abort();
   }, [fetchData]);
 
   // Fetch invoices for drill-down
@@ -634,5 +636,13 @@ function CustomerRow({
         </tr>
       )}
     </>
+  );
+}
+
+export default function CustomerProfitPage() {
+  return (
+    <Suspense>
+      <CustomerProfitPageContent />
+    </Suspense>
   );
 }

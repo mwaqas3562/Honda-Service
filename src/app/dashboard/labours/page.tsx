@@ -8,6 +8,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import IntegerInput from "@/components/IntegerInput";
 import { fmtRs } from "@/lib/utils";
+import { inputClassFull as inputCls } from "@/lib/constants";
 
 interface Labour {
   id: number;
@@ -25,6 +26,7 @@ export default function LaboursPage() {
   const [editLabour, setEditLabour] = useState<Labour | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Labour | null>(null);
   const [formLoading, setFormLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -33,12 +35,13 @@ export default function LaboursPage() {
   const [defaultPrice, setDefaultPrice] = useState("");
   const [notes, setNotes] = useState("");
 
-  const fetchLabours = useCallback(async () => {
+  const fetchLabours = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/labours");
+      const res = await fetch("/api/labours", { signal });
       if (res.ok) setLabours(await res.json());
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error(err);
     } finally {
       setLoading(false);
@@ -46,7 +49,9 @@ export default function LaboursPage() {
   }, []);
 
   useEffect(() => {
-    fetchLabours();
+    const c = new AbortController();
+    fetchLabours(c.signal);
+    return () => c.abort();
   }, [fetchLabours]);
 
   const filtered = useMemo(() => {
@@ -113,6 +118,7 @@ export default function LaboursPage() {
 
   async function handleDelete() {
     if (!deleteTarget) return;
+    setActionLoading(true);
     try {
       const res = await fetch(`/api/labours/${deleteTarget.id}`, { method: "DELETE" });
       const data = await res.json();
@@ -123,12 +129,10 @@ export default function LaboursPage() {
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to delete", "error");
       setDeleteTarget(null);
+    } finally {
+      setActionLoading(false);
     }
   }
-
-
-  const inputCls =
-    "w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-shadow bg-white placeholder:text-gray-400";
 
   return (
     <>
@@ -335,6 +339,7 @@ export default function LaboursPage() {
         title="Delete Labour"
         message={`Delete "${deleteTarget?.name}"? This action cannot be undone.`}
         confirmLabel="Delete"
+        loading={actionLoading}
         onConfirm={handleDelete}
         onCancel={() => setDeleteTarget(null)}
       />

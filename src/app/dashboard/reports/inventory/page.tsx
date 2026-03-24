@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Search,
@@ -66,7 +66,7 @@ interface LedgerEntry {
 
 /* ─── Component ────────────────────────────── */
 
-export default function InventoryReportPage() {
+function InventoryReportPageContent() {
   const sp = useSearchParams();
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [summary, setSummary] = useState<InvSummary | null>(null);
@@ -83,14 +83,14 @@ export default function InventoryReportPage() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ sort: sortBy, stockFilter });
       if (search) params.set("search", search);
       if (categoryFilter) params.set("category", categoryFilter);
 
-      const res = await fetch(`/api/reports/inventory?${params}`);
+      const res = await fetch(`/api/reports/inventory?${params}`, { signal });
       if (res.ok) {
         const data = await res.json();
         setItems(data.items);
@@ -98,6 +98,7 @@ export default function InventoryReportPage() {
         setCategories(data.categories);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error(err);
     } finally {
       setLoading(false);
@@ -105,8 +106,9 @@ export default function InventoryReportPage() {
   }, [search, categoryFilter, stockFilter, sortBy]);
 
   useEffect(() => {
-    const t = setTimeout(fetchData, 300);
-    return () => clearTimeout(t);
+    const c = new AbortController();
+    const t = setTimeout(() => fetchData(c.signal), 300);
+    return () => { clearTimeout(t); c.abort(); };
   }, [fetchData]);
 
   // Fetch stock ledger when a part is clicked
@@ -389,4 +391,8 @@ export default function InventoryReportPage() {
       </Modal>
     </>
   );
+}
+
+export default function InventoryReportPage() {
+  return <Suspense><InventoryReportPageContent /></Suspense>;
 }

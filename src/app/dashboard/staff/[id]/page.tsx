@@ -13,7 +13,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Banknote,
-  Clock,
   TrendingUp,
   Wallet,
 } from "lucide-react";
@@ -119,29 +118,32 @@ export default function StaffDetailPage() {
   const [advNote, setAdvNote] = useState("");
   const [advSaving, setAdvSaving] = useState(false);
 
-  // Delete advance
   const [deleteAdvId, setDeleteAdvId] = useState<number | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const daysInMonth = getDaysInMonth(month);
 
   /* ── Fetch staff info ── */
   useEffect(() => {
-    fetch(`/api/staff?search=`)
+    const c = new AbortController();
+    fetch(`/api/staff?search=`, { signal: c.signal })
       .then((r) => r.json())
       .then((list: Staff[]) => {
         const s = list.find((x: Staff) => x.id === staffId);
         if (s) setStaff(s);
-      });
+      })
+      .catch((err) => { if (err?.name !== "AbortError") {} });
+    return () => c.abort();
   }, [staffId]);
 
   /* ── Fetch month data ── */
-  const fetchMonthData = useCallback(async () => {
+  const fetchMonthData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const [attRes, advRes, salRes] = await Promise.all([
-        fetch(`/api/staff/${staffId}/attendance?month=${month}`),
-        fetch(`/api/staff/${staffId}/advances?month=${month}`),
-        fetch(`/api/salary?month=${month}`),
+        fetch(`/api/staff/${staffId}/attendance?month=${month}`, { signal }),
+        fetch(`/api/staff/${staffId}/advances?month=${month}`, { signal }),
+        fetch(`/api/salary?month=${month}`, { signal }),
       ]);
 
       if (attRes.ok) setAttendance(await attRes.json());
@@ -153,6 +155,7 @@ export default function StaffDetailPage() {
         if (row) setSalaryRow(row);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error("Failed to fetch data:", err);
     } finally {
       setLoading(false);
@@ -160,7 +163,9 @@ export default function StaffDetailPage() {
   }, [staffId, month]);
 
   useEffect(() => {
-    fetchMonthData();
+    const c = new AbortController();
+    fetchMonthData(c.signal);
+    return () => c.abort();
   }, [fetchMonthData]);
 
   /* ── Attendance map (date string → status) ── */
@@ -243,6 +248,7 @@ export default function StaffDetailPage() {
   /* ── Delete advance ── */
   async function confirmDeleteAdvance() {
     if (!deleteAdvId) return;
+    setActionLoading(true);
     try {
       const res = await fetch(`/api/staff/${staffId}/advances?advanceId=${deleteAdvId}`, { method: "DELETE" });
       if (res.ok) {
@@ -255,6 +261,8 @@ export default function StaffDetailPage() {
       }
     } catch {
       toast("Failed to delete", "error");
+    } finally {
+      setActionLoading(false);
     }
   }
 
@@ -616,6 +624,7 @@ export default function StaffDetailPage() {
         title="Delete Advance"
         message="Are you sure you want to delete this advance?"
         confirmLabel="Delete"
+        loading={actionLoading}
         onConfirm={confirmDeleteAdvance}
         onCancel={() => setDeleteAdvId(null)}
       />

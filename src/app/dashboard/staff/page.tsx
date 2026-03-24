@@ -19,6 +19,8 @@ interface BonusConfig {
   active: boolean;
 }
 
+import { inputClass } from "@/lib/constants";
+
 interface Staff {
   id: number;
   name: string;
@@ -67,6 +69,7 @@ export default function StaffPage() {
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Staff | null>(null);
   const [saving, setSaving] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
   // Form state
   const [formName, setFormName] = useState("");
@@ -83,16 +86,17 @@ export default function StaffPage() {
   const [bonusActive, setBonusActive] = useState(true);
   const [bonusSaving, setBonusSaving] = useState(false);
 
-  const fetchStaff = useCallback(async () => {
+  const fetchStaff = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (roleFilter) params.set("role", roleFilter);
       if (statusFilter) params.set("status", statusFilter);
-      const res = await fetch(`/api/staff?${params.toString()}`);
+      const res = await fetch(`/api/staff?${params.toString()}`, { signal });
       if (res.ok) setStaff(await res.json());
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error("Failed to fetch staff:", err);
     } finally {
       setLoading(false);
@@ -107,7 +111,9 @@ export default function StaffPage() {
   }, [search]);
 
   useEffect(() => {
-    fetchStaff();
+    const c = new AbortController();
+    fetchStaff(c.signal);
+    return () => c.abort();
   }, [fetchStaff]);
 
   const resetForm = () => {
@@ -249,6 +255,7 @@ export default function StaffPage() {
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
+    setActionLoading(true);
     try {
       const res = await fetch(`/api/staff/${deleteTarget.id}`, { method: "DELETE" });
       if (res.ok) {
@@ -262,6 +269,7 @@ export default function StaffPage() {
       toast("Failed to delete", "error");
     }
     setDeleteTarget(null);
+    setActionLoading(false);
   };
 
   const toggleStatus = async (s: Staff) => {
@@ -284,9 +292,6 @@ export default function StaffPage() {
   const activeCount = staff.filter((s) => s.status === "active").length;
   const totalCount = staff.length;
   const bonusConfigured = staff.filter((s) => s.bonusConfig?.active).length;
-
-
-  const inputClass = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500";
 
   return (
     <>
@@ -572,6 +577,7 @@ export default function StaffPage() {
         open={!!deleteTarget}
         title="Delete Staff"
         message={deleteTarget ? `Are you sure you want to delete "${deleteTarget.name}"? This action cannot be undone.` : ""}
+        loading={actionLoading}
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />

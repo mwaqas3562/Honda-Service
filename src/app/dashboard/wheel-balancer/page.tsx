@@ -7,6 +7,7 @@ import Modal from "@/components/Modal";
 import { useToast } from "@/components/Toast";
 import IntegerInput from "@/components/IntegerInput";
 import { fmtRs } from "@/lib/utils";
+import { inputClass } from "@/lib/constants";
 
 interface WBConfig {
   id: number;
@@ -46,25 +47,26 @@ export default function WheelBalancerPage() {
   const [cfgActive, setCfgActive] = useState(true);
   const [cfgSaving, setCfgSaving] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (monthFilter) params.set("month", monthFilter);
-      const res = await fetch(`/api/wheel-balancer/performance?${params.toString()}`);
+      const res = await fetch(`/api/wheel-balancer/performance?${params.toString()}`, { signal });
       if (res.status === 404) { setNoStaff(true); return; }
       if (res.ok) {
         setNoStaff(false);
         setData(await res.json());
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error("Failed to fetch WB performance:", err);
     } finally {
       setLoading(false);
     }
   }, [monthFilter]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { const c = new AbortController(); fetchData(c.signal); return () => c.abort(); }, [fetchData]);
 
   const openConfig = () => {
     if (data?.config) {
@@ -131,8 +133,6 @@ export default function WheelBalancerPage() {
     const d = new Date(now.getFullYear(), now.getMonth() - i);
     months.push(d.toISOString().slice(0, 7));
   }
-
-  const inputClass = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500";
 
   if (loading) {
     return (

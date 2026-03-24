@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
     const dateTo = searchParams.get("dateTo");
     const jobCardNumber = searchParams.get("jobCardNumber")?.trim();
 
-    const where: Record<string, unknown> = {};
+    const where: Record<string, unknown> = { deletedAt: null };
 
     // Date range filter
     if (dateFrom || dateTo) {
@@ -40,6 +40,12 @@ export async function GET(req: NextRequest) {
       ];
     }
 
+    // Sale type filter (sale | quick_service)
+    const saleType = searchParams.get("saleType");
+    if (saleType && ["sale", "quick_service"].includes(saleType)) {
+      where.saleType = saleType;
+    }
+
     const page = Math.max(parseInt(searchParams.get("page") || "1") || 1, 1);
     const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "100") || 100, 1), 500);
     const skip = (page - 1) * limit;
@@ -51,6 +57,7 @@ export async function GET(req: NextRequest) {
           items: { include: { part: true } },
           labourItems: { include: { labour: true } },
           jobCard: true,
+          staff: { select: { id: true, name: true } },
         },
         orderBy: { createdAt: "desc" },
         skip,
@@ -68,10 +75,18 @@ export async function GET(req: NextRequest) {
 // POST /api/sales — create sale + decrease stock
 export async function POST(req: NextRequest) {
   try {
-    const { jobCardId, customer, paymentType, discount, laborCost, items, labourItems } = await req.json();
+    const { jobCardId, customer, paymentType, discount, laborCost, items, labourItems, saleType, bikeNumber, phone, staffId } = await req.json();
+
+    const VALID_SALE_TYPES = ["sale", "quick_service"];
+    const resolvedSaleType = saleType && VALID_SALE_TYPES.includes(saleType) ? saleType : "sale";
 
     if ((!Array.isArray(items) || items.length === 0) && (!Array.isArray(labourItems) || labourItems.length === 0)) {
       return NextResponse.json({ error: "At least one part or labour item is required" }, { status: 400 });
+    }
+
+    const VALID_PAYMENT_TYPES = ["cash", "card", "credit", "online"];
+    if (paymentType && !VALID_PAYMENT_TYPES.includes(paymentType)) {
+      return NextResponse.json({ error: `Invalid payment type. Must be one of: ${VALID_PAYMENT_TYPES.join(", ")}` }, { status: 400 });
     }
 
     // Validate job card if provided
@@ -133,8 +148,12 @@ export async function POST(req: NextRequest) {
       // 2. Create sale record with items (draft status — stock not deducted)
       const newSale = await tx.sale.create({
         data: {
+          saleType: resolvedSaleType,
           jobCardId: jobCardId || null,
+          staffId: (resolvedSaleType === "quick_service" && staffId) ? staffId : null,
           customer: customerName,
+          bikeNumber: bikeNumber?.trim() || null,
+          phone: phone?.trim() || null,
           date: new Date(),
           laborCost: labor,
           subtotal,
@@ -145,7 +164,7 @@ export async function POST(req: NextRequest) {
           items: { create: saleItems },
           labourItems: saleLabourItems.length > 0 ? { create: saleLabourItems } : undefined,
         },
-        include: { items: { include: { part: true } }, labourItems: { include: { labour: true } }, jobCard: true },
+        include: { items: { include: { part: true } }, labourItems: { include: { labour: true } }, jobCard: true, staff: { select: { id: true, name: true } } },
       });
 
       return newSale;

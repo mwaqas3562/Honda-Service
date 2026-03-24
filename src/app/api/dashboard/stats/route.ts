@@ -11,6 +11,7 @@ export async function GET() {
       allParts,
       salesAgg,
       servicesAgg,
+      qsAgg,
       todaySales,
       todayServices,
       todayJobCards,
@@ -22,11 +23,13 @@ export async function GET() {
       prisma.part.findMany(),
       prisma.sale.aggregate({ _sum: { total: true }, _count: true, where: { status: "final" } }),
       prisma.service.aggregate({ _sum: { total: true }, _count: true }),
+      prisma.sale.aggregate({ _sum: { total: true }, _count: true, where: { status: "final", saleType: "quick_service" } }),
       prisma.sale.findMany({ where: { createdAt: { gte: todayStart } }, include: { jobCard: { select: { jobCardNumber: true } } } }),
       prisma.service.findMany({ where: { createdAt: { gte: todayStart } } }),
       prisma.jobCard.findMany({ where: { createdAt: { gte: todayStart } } }),
       prisma.purchase.findMany({ where: { createdAt: { gte: todayStart } } }),
       prisma.sale.findMany({
+        where: { saleType: "sale" },
         take: 10,
         orderBy: { createdAt: "desc" },
         include: {
@@ -34,7 +37,12 @@ export async function GET() {
           jobCard: { select: { jobCardNumber: true, customerName: true, bikeModel: true, vehicleNumber: true } },
         },
       }),
-      prisma.service.findMany({ take: 5, orderBy: { createdAt: "desc" } }),
+      prisma.sale.findMany({
+        where: { saleType: "quick_service", status: "final" },
+        take: 5,
+        orderBy: { createdAt: "desc" },
+        select: { id: true, customer: true, bikeNumber: true, total: true, status: true, createdAt: true, labourItems: { take: 1, select: { labour: { select: { name: true } } } } },
+      }),
       prisma.service.count({ where: { status: { in: ["pending", "in_progress"] } } }),
     ]);
 
@@ -46,11 +54,14 @@ export async function GET() {
 
     const totalSalesRevenue = Math.round(n(salesAgg._sum.total) * 100) / 100;
     const totalSalesCount = salesAgg._count;
-    const totalServicesRevenue = Math.round(n(servicesAgg._sum.total) * 100) / 100;
+    const totalServicesRevenue = Math.round((n(servicesAgg._sum.total) + n(qsAgg._sum.total)) * 100) / 100;
+    const totalServicesCount = servicesAgg._count + qsAgg._count;
 
     // Today aggregations
-    const todayFinalSales = todaySales.filter((s) => s.status === "final");
+    const todayFinalSales = todaySales.filter((s) => s.status === "final" && s.saleType !== "quick_service");
     const todayDraftSales = todaySales.filter((s) => s.status === "draft");
+    const todayQS = todaySales.filter((s) => s.saleType === "quick_service" && s.status === "final");
+    const todayQSDrafts = todaySales.filter((s) => s.saleType === "quick_service" && s.status === "draft");
 
     return NextResponse.json({
       totalParts,
@@ -61,6 +72,7 @@ export async function GET() {
       totalSalesRevenue,
       totalSalesCount,
       totalServicesRevenue,
+      totalServicesCount,
       activeServicesCount,
       // Today's metrics
       todayJobCardsCount: todayJobCards.length,
@@ -69,8 +81,9 @@ export async function GET() {
       todaySalesCount: todayFinalSales.length,
       todaySalesRevenue: Math.round(todayFinalSales.reduce((s, sale) => s + n(sale.total), 0) * 100) / 100,
       todayDraftsCount: todayDraftSales.length,
-      todayServicesCount: todayServices.length,
-      todayServicesRevenue: Math.round(todayServices.reduce((s, svc) => s + n(svc.total), 0) * 100) / 100,
+      todayServicesCount: todayServices.length + todayQS.length,
+      todayServicesRevenue: Math.round((todayServices.reduce((s, svc) => s + n(svc.total), 0) + todayQS.reduce((s, sale) => s + n(sale.total), 0)) * 100) / 100,
+      todayServicesDraftsCount: todayQSDrafts.length,
       // Recent sales with job card info
       recentSales: recentSales.map((s) => ({
         id: s.id,
@@ -87,9 +100,9 @@ export async function GET() {
       })),
       recentServices: recentServices.map((s) => ({
         id: s.id,
-        customer: s.customerName,
-        bike: s.bikeModel,
-        service: s.serviceType,
+        customer: s.customer || "Walk-in",
+        bike: s.bikeNumber || "—",
+        service: s.labourItems[0]?.labour?.name || "Quick Service",
         status: s.status,
         total: s.total,
         date: s.createdAt,

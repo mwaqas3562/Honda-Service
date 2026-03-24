@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Package, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import PartRow, { Part } from "@/components/PartRow";
 
@@ -49,10 +49,14 @@ export default function PartsTable({
   }, [parts, sortField, sortDir]);
 
   const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
-  const paged = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   // Reset page when parts change
-  if (page > 0 && page >= totalPages) setPage(Math.max(0, totalPages - 1));
+  useEffect(() => {
+    if (page > 0 && page >= totalPages) setPage(Math.max(0, totalPages - 1));
+  }, [page, totalPages]);
+
+  const safePage = page >= totalPages ? Math.max(0, totalPages - 1) : page;
+  const paged = sorted.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   function toggleSort(field: SortField) {
     if (sortField === field) {

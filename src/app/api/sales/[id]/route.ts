@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { updateWheelBalancerTracking, reverseWheelBalancerTracking } from "@/lib/wheel-balancer";
-import { calculateJobCardBonuses } from "@/lib/bonus";
+import { calculateJobCardBonuses, calculateSaleBonuses } from "@/lib/bonus";
 import { n } from "@/lib/utils";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -42,10 +42,15 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       return NextResponse.json({ error: "Cannot edit a finalized invoice" }, { status: 403 });
     }
 
-    const { jobCardId, customer, paymentType, discount, laborCost, items, labourItems } = await req.json();
+    const { jobCardId, customer, paymentType, discount, laborCost, items, labourItems, bikeNumber, phone, staffId } = await req.json();
 
     if ((!Array.isArray(items) || items.length === 0) && (!Array.isArray(labourItems) || labourItems.length === 0)) {
       return NextResponse.json({ error: "At least one part or labour item is required" }, { status: 400 });
+    }
+
+    const VALID_PAYMENT_TYPES = ["cash", "card", "credit", "online"];
+    if (paymentType && !VALID_PAYMENT_TYPES.includes(paymentType)) {
+      return NextResponse.json({ error: `Invalid payment type. Must be one of: ${VALID_PAYMENT_TYPES.join(", ")}` }, { status: 400 });
     }
 
     for (let i = 0; i < (items || []).length; i++) {
@@ -107,7 +112,10 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         where: { id: saleId },
         data: {
           jobCardId: jobCardId || null,
+          staffId: (sale.saleType === "quick_service" && staffId !== undefined) ? (staffId || null) : undefined,
           customer: customerName,
+          bikeNumber: bikeNumber?.trim() || null,
+          phone: phone?.trim() || null,
           laborCost: labor,
           subtotal,
           discount: disc,
@@ -116,7 +124,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
           items: { create: saleItems },
           labourItems: saleLabourItems.length > 0 ? { create: saleLabourItems } : undefined,
         },
-        include: { items: { include: { part: true } }, labourItems: { include: { labour: true } }, jobCard: true },
+        include: { items: { include: { part: true } }, labourItems: { include: { labour: true } }, jobCard: true, staff: { select: { id: true, name: true } } },
       });
     });
 
@@ -181,18 +189,25 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         });
       }
 
-      // 3. Mark job card as completed if linked & calculate bonuses
+      // 3. Lock sale as final FIRST (so bonus calculation sees it as "final")
+      const finalSale = await tx.sale.update({
+        where: { id: saleId },
+        data: { status: "final", finalizedAt: new Date() },
+        include: { items: { include: { part: true } }, labourItems: { include: { labour: true } }, jobCard: true, staff: { select: { id: true, name: true } } },
+      });
+
+      // 4. Mark job card as completed & calculate bonuses (sale is now "final" in this TX)
       if (sale.jobCardId) {
         await tx.jobCard.update({ where: { id: sale.jobCardId }, data: { status: "completed" } });
         await calculateJobCardBonuses(sale.jobCardId, tx);
       }
 
-      // 4. Lock sale as final
-      return tx.sale.update({
-        where: { id: saleId },
-        data: { status: "final", finalizedAt: new Date() },
-        include: { items: { include: { part: true } }, labourItems: { include: { labour: true } }, jobCard: true },
-      });
+      // 5. Calculate bonus for quick_service with assigned staff (no job card needed)
+      if (sale.saleType === "quick_service" && sale.staffId && !sale.jobCardId) {
+        await calculateSaleBonuses(saleId, tx);
+      }
+
+      return finalSale;
     });
 
     // Track wheel balancer earnings after finalization
@@ -206,7 +221,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   }
 }
 
-// DELETE /api/sales/:id — delete a draft sale only (atomic with WB tracking reversal)
+// DELETE /api/sales/:id — soft-delete a draft sale (atomic with WB tracking reversal)
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
   try {
     const { id } = await params;
@@ -220,8 +235,8 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
     await prisma.$transaction(async (tx) => {
       // Reverse wheel balancer tracking inside transaction
       await reverseWheelBalancerTracking(saleId, tx);
-      // Delete sale (cascades to items via onDelete: Cascade)
-      await tx.sale.delete({ where: { id: saleId } });
+      // Soft-delete: set deletedAt instead of removing the record
+      await tx.sale.update({ where: { id: saleId }, data: { deletedAt: new Date() } });
     });
 
     return NextResponse.json({ success: true });

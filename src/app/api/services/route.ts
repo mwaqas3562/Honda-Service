@@ -36,6 +36,11 @@ export async function POST(req: NextRequest) {
     if (!bikeModel?.trim()) return NextResponse.json({ error: "Bike model is required" }, { status: 400 });
     if (!serviceType?.trim()) return NextResponse.json({ error: "Service type is required" }, { status: 400 });
 
+    const VALID_SERVICE_TYPES = ["oil_change", "engine_tune_up", "brake_service", "chain_adjustment", "full_service", "clutch_replacement", "electrical_repair", "body_work", "other"];
+    if (!VALID_SERVICE_TYPES.includes(serviceType.trim())) {
+      return NextResponse.json({ error: `Invalid service type. Must be one of: ${VALID_SERVICE_TYPES.join(", ")}` }, { status: 400 });
+    }
+
     const serviceItems = (items || []).map((item: { partId: number; quantity: number; unitPrice: number }) => ({
       partId: item.partId,
       quantity: Math.max(1, Math.round(item.quantity)),

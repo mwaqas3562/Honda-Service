@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Calendar,
@@ -47,7 +47,7 @@ type Preset = { label: string; from: string; to: string };
 
 /* ─── Component ──────────────────────────────── */
 
-export default function ProfitReportPage() {
+function ProfitReportPageContent() {
   const { toast } = useToast();
   const sp = useSearchParams();
   const urlDates = parseDateParams(sp, monthStart(), today());
@@ -62,11 +62,11 @@ export default function ProfitReportPage() {
 
   const presets = getDatePresets();
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ from: dateFrom, to: dateTo });
-      const res = await fetch(`/api/reports/profit?${params}`);
+      const res = await fetch(`/api/reports/profit?${params}`, { signal });
       if (res.ok) {
         const data = await res.json();
         setInvoices(data.invoices);
@@ -74,7 +74,8 @@ export default function ProfitReportPage() {
       } else {
         toast("Failed to load profit report", "error");
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       toast("Network error", "error");
     } finally {
       setLoading(false);
@@ -82,7 +83,9 @@ export default function ProfitReportPage() {
   }, [dateFrom, dateTo, toast]);
 
   useEffect(() => {
-    fetchData();
+    const c = new AbortController();
+    fetchData(c.signal);
+    return () => c.abort();
   }, [fetchData]);
 
   function applyPreset(p: Preset) {
@@ -411,5 +414,12 @@ function SummaryRow({
         {formatRs(value)}
       </span>
     </div>
+  );
+}
+export default function ProfitReportPage() {
+  return (
+    <Suspense>
+      <ProfitReportPageContent />
+    </Suspense>
   );
 }

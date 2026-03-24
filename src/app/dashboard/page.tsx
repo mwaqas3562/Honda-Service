@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Package, ShoppingCart, Wrench, DollarSign, TrendingUp, CalendarDays, FileText, Truck, ClipboardList, Lock, RefreshCw } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { fmtRs } from "@/lib/utils";
+import { SERVICE_STATUS_COLOR, SERVICE_STATUS_LABEL } from "@/lib/constants";
 
 interface RecentSale {
   id: number;
@@ -38,6 +39,7 @@ interface DashboardStats {
   totalSalesRevenue: number;
   totalSalesCount: number;
   totalServicesRevenue: number;
+  totalServicesCount: number;
   activeServicesCount: number;
   todayJobCardsCount: number;
   todayPurchasesCount: number;
@@ -47,6 +49,7 @@ interface DashboardStats {
   todayDraftsCount: number;
   todayServicesCount: number;
   todayServicesRevenue: number;
+  todayServicesDraftsCount: number;
   recentSales: RecentSale[];
   recentServices: RecentService[];
 }
@@ -56,26 +59,20 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/dashboard/stats")
+    const c = new AbortController();
+    fetch("/api/dashboard/stats", { signal: c.signal })
       .then((r) => r.json())
       .then((s) => setStats(s))
-      .catch(console.error)
+      .catch((err) => { if (err?.name !== "AbortError") console.error(err); })
       .finally(() => setLoading(false));
+    return () => c.abort();
   }, []);
 
 
   const todayStr = new Date().toLocaleDateString("en-PK", { weekday: "long", day: "2-digit", month: "short", year: "numeric" });
 
-  const statusColor: Record<string, string> = {
-    pending: "bg-red-100 text-red-700",
-    in_progress: "bg-yellow-100 text-yellow-700",
-    completed: "bg-green-100 text-green-700",
-  };
-  const statusLabel: Record<string, string> = {
-    pending: "Pending",
-    in_progress: "In Progress",
-    completed: "Completed",
-  };
+  const statusColor = SERVICE_STATUS_COLOR;
+  const statusLabel = SERVICE_STATUS_LABEL;
 
   if (loading) {
     return (
@@ -139,6 +136,9 @@ export default function DashboardPage() {
             </div>
             <p className="text-3xl font-extrabold text-gray-900">{fmtRs(stats?.todayServicesRevenue ?? 0)}</p>
             <p className="text-sm text-gray-500 mt-1">Services Today</p>
+            {(stats?.todayServicesDraftsCount ?? 0) > 0 && (
+              <p className="text-xs text-amber-600 mt-1.5 font-medium">+ {stats!.todayServicesDraftsCount} draft(s) pending</p>
+            )}
           </div>
 
           {/* Sales Today */}
@@ -190,9 +190,9 @@ export default function DashboardPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Active Services</p>
-              <p className="text-2xl font-bold text-purple-600 mt-1">{stats?.activeServicesCount ?? "—"}</p>
-              <p className="text-xs text-gray-400 mt-0.5">{stats ? fmtRs(stats.totalServicesRevenue) + " total" : ""}</p>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Services</p>
+              <p className="text-2xl font-bold text-purple-600 mt-1">{stats?.totalServicesCount ?? "—"}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{stats ? fmtRs(stats.totalServicesRevenue) + " revenue" : ""}</p>
             </div>
             <div className="w-11 h-11 bg-purple-50 rounded-lg flex items-center justify-center">
               <Wrench className="w-5.5 h-5.5 text-purple-600" />

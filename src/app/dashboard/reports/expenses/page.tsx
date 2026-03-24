@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Calendar,
@@ -54,7 +54,7 @@ const emptyForm: FormData = { amount: "", type: "food", note: "", date: today() 
 
 /* ─── Component ──────────────────────────────── */
 
-export default function ExpensesReportPage() {
+function ExpensesReportPageContent() {
   const { toast } = useToast();
   const sp = useSearchParams();
   const urlDates = parseDateParams(sp, monthStart(), today());
@@ -73,23 +73,24 @@ export default function ExpensesReportPage() {
   const [form, setForm] = useState<FormData>({ ...emptyForm });
   const [saving, setSaving] = useState(false);
 
-  // Delete confirm
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const presets = getDatePresets();
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ from: dateFrom, to: dateTo });
       if (typeFilter !== "all") params.set("type", typeFilter);
-      const res = await fetch(`/api/expenses?${params}`);
+      const res = await fetch(`/api/expenses?${params}`, { signal });
       if (res.ok) {
         const data = await res.json();
         setExpenses(data.expenses);
         setTotal(data.total);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error(err);
     } finally {
       setLoading(false);
@@ -97,7 +98,9 @@ export default function ExpensesReportPage() {
   }, [dateFrom, dateTo, typeFilter]);
 
   useEffect(() => {
-    fetchData();
+    const c = new AbortController();
+    fetchData(c.signal);
+    return () => c.abort();
   }, [fetchData]);
 
   function applyPreset(p: Preset) {
@@ -146,6 +149,7 @@ export default function ExpensesReportPage() {
 
   async function handleDelete() {
     if (!deleteId) return;
+    setActionLoading(true);
     try {
       const res = await fetch(`/api/expenses?id=${deleteId}`, { method: "DELETE" });
       if (res.ok) {
@@ -158,6 +162,7 @@ export default function ExpensesReportPage() {
       toast("Network error", "error");
     } finally {
       setDeleteId(null);
+      setActionLoading(false);
     }
   }
 
@@ -426,9 +431,13 @@ export default function ExpensesReportPage() {
         open={deleteId !== null}
         onCancel={() => setDeleteId(null)}
         onConfirm={handleDelete}
+        loading={actionLoading}
         title="Delete Expense"
         message="Are you sure you want to delete this expense? This action cannot be undone."
       />
     </div>
   );
+}
+export default function ExpensesReportPage() {
+  return <Suspense><ExpensesReportPageContent /></Suspense>;
 }

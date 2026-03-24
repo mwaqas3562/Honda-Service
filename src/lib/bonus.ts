@@ -91,3 +91,66 @@ export async function recalculateAllBonuses() {
 
   return { processed };
 }
+
+/**
+ * Calculate and upsert bonus for the staff assigned to a quick_service sale.
+ * Idempotent via upsert on staffId+saleId.
+ *
+ * Awards bonus when:
+ * 1. Sale status is "final"
+ * 2. Sale has a staffId assigned
+ * 3. The staff member has an active bonus config
+ * 4. The sale total >= minJobcardAmount (same threshold used for job cards)
+ */
+export async function calculateSaleBonuses(
+  saleId: number,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx?: any,
+) {
+  const db = tx || prisma;
+
+  const sale = await db.sale.findUnique({
+    where: { id: saleId },
+    select: { id: true, staffId: true, total: true, status: true },
+  });
+
+  if (!sale || sale.status !== "final" || !sale.staffId) return;
+
+  const config = await db.staffBonusConfig.findUnique({
+    where: { staffId: sale.staffId },
+  });
+
+  if (!config || !config.active) return;
+
+  const saleTotal = n(sale.total);
+  if (saleTotal < n(config.minJobcardAmount)) return;
+
+  const amountAboveMin = saleTotal - n(config.minJobcardAmount);
+  const bonusAmount =
+    config.bonusType === "percentage"
+      ? Math.round(((amountAboveMin * n(config.bonusValue)) / 100) * 100) / 100
+      : n(config.bonusValue);
+
+  await db.staffBonusLog.upsert({
+    where: {
+      staffId_saleId: {
+        staffId: sale.staffId,
+        saleId,
+      },
+    },
+    create: {
+      staffId: sale.staffId,
+      saleId,
+      jobCardAmount: saleTotal,
+      bonusAmount,
+      bonusType: config.bonusType,
+      bonusValue: config.bonusValue,
+    },
+    update: {
+      jobCardAmount: saleTotal,
+      bonusAmount,
+      bonusType: config.bonusType,
+      bonusValue: config.bonusValue,
+    },
+  });
+}

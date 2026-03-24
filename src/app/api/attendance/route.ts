@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { AttendanceStatus } from "@/generated/prisma/client";
 
 // GET /api/attendance?month=2026-03 — all staff attendance for a month
 export async function GET(req: NextRequest) {
@@ -44,12 +45,18 @@ export async function POST(req: NextRequest) {
     }
 
     // Upsert each entry
+    const VALID_ATTENDANCE_STATUSES = ["present", "absent"];
+    for (const e of entries) {
+      if (!VALID_ATTENDANCE_STATUSES.includes(e.status)) {
+        return NextResponse.json({ error: `Invalid attendance status "${e.status}". Must be one of: ${VALID_ATTENDANCE_STATUSES.join(", ")}` }, { status: 400 });
+      }
+    }
     const results = await prisma.$transaction(
       entries.map((e: { staffId: number; status: string }) =>
         prisma.staffAttendance.upsert({
           where: { staffId_date: { staffId: e.staffId, date: new Date(date) } },
-          update: { status: e.status },
-          create: { staffId: e.staffId, date: new Date(date), status: e.status },
+          update: { status: e.status as AttendanceStatus },
+          create: { staffId: e.staffId, date: new Date(date), status: e.status as AttendanceStatus },
         })
       )
     );

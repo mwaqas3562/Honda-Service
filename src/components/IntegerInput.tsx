@@ -1,51 +1,43 @@
 "use client";
 
 import { useCallback, type InputHTMLAttributes } from "react";
+import { Minus, Plus } from "lucide-react";
 
 interface IntegerInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "onChange" | "value"> {
   value: string | number;
   onChange: (value: string) => void;
   /** Allow zero as a valid value (default: true) */
   allowZero?: boolean;
+  /** Show +/- stepper buttons around the input */
+  showStepper?: boolean;
+  /** Minimum value for stepper (default: 1) */
+  min?: number;
+  /** Maximum value for stepper (no limit if omitted) */
+  max?: number;
+  /** Step size for stepper buttons (default: 1) */
+  step?: number;
 }
 
-/**
- * Strict integer-only input component.
- * - Uses type="text" with inputMode="numeric" for full control
- * - Blocks decimal points, commas, 'e', '+', '-' via keyDown
- * - Strips non-digit characters on paste
- * - Prevents scroll-wheel and arrow-key value changes
- * - Only allows non-negative whole numbers
- */
 export default function IntegerInput({
   value,
   onChange,
   allowZero = true,
+  showStepper,
+  min = 1,
+  max,
+  step = 1,
   className,
   ...rest
 }: IntegerInputProps) {
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Block decimal, negative, scientific notation, arrows
-    if (
-      e.key === "." ||
-      e.key === "," ||
-      e.key === "e" ||
-      e.key === "E" ||
-      e.key === "-" ||
-      e.key === "+" ||
-      e.key === "ArrowUp" ||
-      e.key === "ArrowDown"
-    ) {
+    if ([".", ",", "e", "E", "-", "+", "ArrowUp", "ArrowDown"].includes(e.key)) {
       e.preventDefault();
     }
   }, []);
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const raw = e.target.value;
-      // Strip anything that's not a digit
-      const cleaned = raw.replace(/\D/g, "");
-      onChange(cleaned);
+      onChange(e.target.value.replace(/\D/g, ""));
     },
     [onChange]
   );
@@ -53,12 +45,8 @@ export default function IntegerInput({
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLInputElement>) => {
       e.preventDefault();
-      const pasted = e.clipboardData.getData("text");
-      // Extract only digits from pasted content
-      const cleaned = pasted.replace(/\D/g, "");
-      if (cleaned) {
-        onChange(cleaned);
-      }
+      const cleaned = e.clipboardData.getData("text").replace(/\D/g, "");
+      if (cleaned) onChange(cleaned);
     },
     [onChange]
   );
@@ -72,8 +60,18 @@ export default function IntegerInput({
   }, []);
 
   const displayValue = value === 0 && !allowZero ? "" : String(value ?? "");
+  const numVal = parseInt(String(value), 10) || 0;
 
-  return (
+  const handleDecrement = useCallback(() => {
+    onChange(String(Math.max(min, numVal - step)));
+  }, [numVal, min, step, onChange]);
+
+  const handleIncrement = useCallback(() => {
+    const next = max !== undefined ? Math.min(max, numVal + step) : numVal + step;
+    onChange(String(next));
+  }, [numVal, max, step, onChange]);
+
+  const inputEl = (
     <input
       type="text"
       inputMode="numeric"
@@ -88,5 +86,31 @@ export default function IntegerInput({
       autoComplete="off"
       {...rest}
     />
+  );
+
+  if (!showStepper) return inputEl;
+
+  return (
+    <div className="inline-flex items-center gap-0">
+      <button
+        type="button"
+        onClick={handleDecrement}
+        disabled={numVal <= min}
+        className="flex items-center justify-center w-7 h-7 rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        tabIndex={-1}
+      >
+        <Minus className="w-3 h-3" />
+      </button>
+      {inputEl}
+      <button
+        type="button"
+        onClick={handleIncrement}
+        disabled={max !== undefined && numVal >= max}
+        className="flex items-center justify-center w-7 h-7 rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        tabIndex={-1}
+      >
+        <Plus className="w-3 h-3" />
+      </button>
+    </div>
   );
 }

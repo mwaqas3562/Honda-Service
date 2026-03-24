@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Calendar,
@@ -127,7 +127,7 @@ type SortKey =
 
 /* ─── Component ──────────────────────────────────── */
 
-export default function DailyCashReportPage() {
+function DailyCashReportPageContent() {
   const { toast } = useToast();
   const sp = useSearchParams();
   const urlDates = parseDateParams(sp, monthStart(), monthEnd());
@@ -150,6 +150,7 @@ export default function DailyCashReportPage() {
 
   // Delete
   const [deleteTarget, setDeleteTarget] = useState<DailyCashEntry | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   // Detail drill-down
   const [detailEntry, setDetailEntry] = useState<DailyCashEntry | null>(null);
@@ -163,17 +164,18 @@ export default function DailyCashReportPage() {
   const presets = getPresets();
 
   /* ── Fetch ── */
-  const fetchEntries = useCallback(async () => {
+  const fetchEntries = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ from: dateFrom, to: dateTo });
-      const res = await fetch(`/api/reports/daily-cash?${params}`);
+      const res = await fetch(`/api/reports/daily-cash?${params}`, { signal });
       if (res.ok) {
         const data = await res.json();
         setEntries(data.entries);
         setTotals(data.totals);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error("Failed to fetch daily cash:", err);
     } finally {
       setLoading(false);
@@ -181,7 +183,9 @@ export default function DailyCashReportPage() {
   }, [dateFrom, dateTo]);
 
   useEffect(() => {
-    fetchEntries();
+    const c = new AbortController();
+    fetchEntries(c.signal);
+    return () => c.abort();
   }, [fetchEntries]);
 
   /* ── Preset click ── */
@@ -251,6 +255,7 @@ export default function DailyCashReportPage() {
   /* ── Delete ── */
   async function handleDelete() {
     if (!deleteTarget) return;
+    setActionLoading(true);
     try {
       const res = await fetch(
         `/api/reports/daily-cash?id=${deleteTarget.id}`,
@@ -262,6 +267,8 @@ export default function DailyCashReportPage() {
       fetchEntries();
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to delete", "error");
+    } finally {
+      setActionLoading(false);
     }
   }
 
@@ -1129,9 +1136,14 @@ export default function DailyCashReportPage() {
             : ""
         }
         confirmLabel="Delete"
+        loading={actionLoading}
         onConfirm={handleDelete}
         onCancel={() => setDeleteTarget(null)}
       />
     </>
   );
+}
+
+export default function DailyCashReportPage() {
+  return <Suspense><DailyCashReportPageContent /></Suspense>;
 }

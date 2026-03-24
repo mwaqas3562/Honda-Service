@@ -50,7 +50,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   }
 }
 
-// DELETE /api/staff/[id] — delete staff member
+// DELETE /api/staff/[id] — soft-delete staff member
 export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -68,7 +68,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
       );
     }
 
-    await prisma.staff.delete({ where: { id: staffId } });
+    await prisma.staff.update({ where: { id: staffId }, data: { deletedAt: new Date() } });
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("DELETE /api/staff/[id] error:", error);

@@ -8,6 +8,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import IntegerInput from "@/components/IntegerInput";
 import { fmtRs } from "@/lib/utils";
+import { BIKE_MODELS, inputClassFull as inputClass } from "@/lib/constants";
 
 interface StaffMember {
   id: number;
@@ -49,12 +50,6 @@ interface JobCard {
   updatedAt: string;
 }
 
-const BIKE_MODELS = [
-  "CD-70", "CD-70 Dream", "CG-125", "CG-125S", "CG-125 Self",
-  "CB-125F", "CB-150F", "CB-150F SE", "Deluxe", "Pridor",
-  "Navi", "CB-250F", "Other",
-];
-
 const LABOUR_TYPES = [
   "Engine Tuning", "Garage Set", "Oil Change", "Chain Adjustment",
   "Brake Service", "Electrical Work", "Body Work", "Wheel Balancing", "General Service", "Other",
@@ -76,6 +71,7 @@ export default function JobCardsPage() {
   const [editCard, setEditCard] = useState<JobCard | null>(null);
   const [completeTarget, setCompleteTarget] = useState<JobCard | null>(null);
   const [formLoading, setFormLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState("");
 
   // Filters
@@ -104,26 +100,26 @@ export default function JobCardsPage() {
   const [newStaffContact, setNewStaffContact] = useState("");
   const [addStaffLoading, setAddStaffLoading] = useState(false);
 
-  const fetchJobCards = useCallback(async () => {
+  const fetchJobCards = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/job-cards");
+      const res = await fetch("/api/job-cards", { signal });
       if (res.ok) {
         const json = await res.json();
         setJobCards(json.data ?? json);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (err instanceof Error && err.name === "AbortError") return; console.error(err); }
     finally { setLoading(false); }
   }, []);
 
-  const fetchStaff = useCallback(async () => {
+  const fetchStaff = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch("/api/staff?status=active");
+      const res = await fetch("/api/staff?status=active", { signal });
       if (res.ok) setAllStaff(await res.json());
-    } catch (err) { console.error(err); }
+    } catch (err) { if (err instanceof Error && err.name === "AbortError") return; console.error(err); }
   }, []);
 
-  useEffect(() => { fetchJobCards(); fetchStaff(); }, [fetchJobCards, fetchStaff]);
+  useEffect(() => { const c = new AbortController(); fetchJobCards(c.signal); fetchStaff(c.signal); return () => c.abort(); }, [fetchJobCards, fetchStaff]);
 
   // Close staff dropdown on outside click
   useEffect(() => {
@@ -302,8 +298,8 @@ export default function JobCardsPage() {
 
   async function handleComplete() {
     if (!completeTarget) return;
+    setActionLoading(true);
     try {
-      // Prepare full job card payload for completion
       const payload = {
         customerName: completeTarget.customerName,
         customerPhone: completeTarget.customerPhone,
@@ -329,6 +325,7 @@ export default function JobCardsPage() {
       }
     } catch (err) { console.error(err); }
     setCompleteTarget(null);
+    setActionLoading(false);
   }
 
 
@@ -352,7 +349,6 @@ export default function JobCardsPage() {
     if (total >= 1500) return { bg: "bg-yellow-50", label: `Below bonus threshold (${fmtRs(maxThreshold)})` };
     return { bg: "bg-red-50", label: `Low value — far below threshold (${fmtRs(maxThreshold)})` };
   }
-  const inputClass = "w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white transition-shadow placeholder:text-gray-400";
 
   return (
     <>
@@ -508,6 +504,7 @@ export default function JobCardsPage() {
         open={!!completeTarget}
         onCancel={() => setCompleteTarget(null)}
         onConfirm={handleComplete}
+        loading={actionLoading}
         title="Mark as Completed"
         message={(() => {
           if (!completeTarget) return "";

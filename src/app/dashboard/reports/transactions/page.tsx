@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Calendar,
@@ -90,7 +90,7 @@ const getPresets = getDatePresets;
 
 /* ─── Component ──────────────────────────────── */
 
-export default function TransactionsReportPage() {
+function TransactionsReportPageContent() {
   const sp = useSearchParams();
   const urlDates = parseDateParams(sp, monthStart(), today());
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -110,7 +110,7 @@ export default function TransactionsReportPage() {
 
   const presets = getPresets();
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -121,13 +121,14 @@ export default function TransactionsReportPage() {
       });
       if (search) params.set("search", search);
 
-      const res = await fetch(`/api/reports/transactions?${params}`);
+      const res = await fetch(`/api/reports/transactions?${params}`, { signal });
       if (res.ok) {
         const data = await res.json();
         setTransactions(data.transactions);
         setSummary(data.summary);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error(err);
     } finally {
       setLoading(false);
@@ -135,8 +136,9 @@ export default function TransactionsReportPage() {
   }, [dateFrom, dateTo, typeFilter, paymentFilter, search]);
 
   useEffect(() => {
-    const t = setTimeout(fetchData, 300);
-    return () => clearTimeout(t);
+    const c = new AbortController();
+    const t = setTimeout(() => fetchData(c.signal), 300);
+    return () => { clearTimeout(t); c.abort(); };
   }, [fetchData]);
 
   function applyPreset(p: Preset) {
@@ -439,4 +441,8 @@ export default function TransactionsReportPage() {
       </Modal>
     </>
   );
+}
+
+export default function TransactionsReportPage() {
+  return <Suspense><TransactionsReportPageContent /></Suspense>;
 }

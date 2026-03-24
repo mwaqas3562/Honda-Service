@@ -85,14 +85,14 @@ export default function DailyAttendancePage() {
   const isFuture = date > todayStr();
 
   // Fetch active staff + existing attendance for the date
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const month = date.slice(0, 7);
       const [staffRes, attRes, lockRes] = await Promise.all([
-        fetch("/api/staff?search="),
-        fetch(`/api/attendance?month=${month}`),
-        fetch(`/api/salary?month=${month}`),
+        fetch("/api/staff?search=", { signal }),
+        fetch(`/api/attendance?month=${month}`, { signal }),
+        fetch(`/api/salary?month=${month}`, { signal }),
       ]);
 
       if (staffRes.ok) {
@@ -117,6 +117,7 @@ export default function DailyAttendancePage() {
         setLocked(d.locked);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error("Failed to fetch:", err);
     } finally {
       setLoading(false);
@@ -124,7 +125,9 @@ export default function DailyAttendancePage() {
   }, [date]);
 
   useEffect(() => {
-    fetchData();
+    const c = new AbortController();
+    fetchData(c.signal);
+    return () => c.abort();
   }, [fetchData]);
 
   function toggleStatus(staffId: number) {

@@ -45,6 +45,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "At least one item is required" }, { status: 400 });
     }
 
+    const VALID_PURCHASE_STATUSES = ["ordered", "in_transit", "received"];
+    if (status && !VALID_PURCHASE_STATUSES.includes(status)) {
+      return NextResponse.json({ error: `Invalid status. Must be one of: ${VALID_PURCHASE_STATUSES.join(", ")}` }, { status: 400 });
+    }
+
     const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
     if (!vendor) return NextResponse.json({ error: "Vendor not found" }, { status: 404 });
 
@@ -67,7 +72,7 @@ export async function POST(req: NextRequest) {
     });
 
     const total = purchaseItems.reduce((sum: number, i: { total: number }) => sum + i.total, 0);
-    const purchaseStatus = status || "received";
+    const purchaseStatus = status || "ordered";
 
     // Single transaction: create purchase + update stock (if received)
     const purchase = await prisma.$transaction(async (tx) => {

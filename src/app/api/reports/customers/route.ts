@@ -13,6 +13,14 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const search = searchParams.get("search")?.trim();
     const customerName = searchParams.get("name")?.trim();
+    const from = searchParams.get("from")?.trim();
+    const to = searchParams.get("to")?.trim();
+
+    // Build an optional createdAt date range filter
+    const dateFilter: { gte?: Date; lte?: Date } = {};
+    if (from) dateFilter.gte = new Date(`${from}T00:00:00`);
+    if (to) dateFilter.lte = new Date(`${to}T23:59:59.999`);
+    const hasDateFilter = Object.keys(dateFilter).length > 0;
 
     // ── Single customer drill-down ──
     if (customerName) {
@@ -20,6 +28,7 @@ export async function GET(req: NextRequest) {
         prisma.sale.findMany({
           where: {
             status: "final",
+            ...(hasDateFilter && { createdAt: dateFilter }),
             OR: [
               { customer: { equals: customerName, mode: "insensitive" } },
               { jobCard: { customerName: { equals: customerName, mode: "insensitive" } } },
@@ -33,14 +42,20 @@ export async function GET(req: NextRequest) {
           orderBy: { createdAt: "desc" },
         }),
         prisma.service.findMany({
-          where: { customerName: { equals: customerName, mode: "insensitive" } },
+          where: {
+            customerName: { equals: customerName, mode: "insensitive" },
+            ...(hasDateFilter && { createdAt: dateFilter }),
+          },
           include: {
             items: { include: { part: { select: { name: true, partNumber: true } } } },
           },
           orderBy: { createdAt: "desc" },
         }),
         prisma.jobCard.findMany({
-          where: { customerName: { equals: customerName, mode: "insensitive" } },
+          where: {
+            customerName: { equals: customerName, mode: "insensitive" },
+            ...(hasDateFilter && { createdAt: dateFilter }),
+          },
           select: {
             id: true,
             jobCardNumber: true,
@@ -187,7 +202,7 @@ export async function GET(req: NextRequest) {
     // ── Customer list (aggregated) ──
     const [sales, services] = await Promise.all([
       prisma.sale.findMany({
-        where: { status: "final" },
+        where: { status: "final", ...(hasDateFilter && { createdAt: dateFilter }) },
         select: {
           customer: true,
           total: true,
@@ -198,6 +213,7 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: "desc" },
       }),
       prisma.service.findMany({
+        where: { ...(hasDateFilter && { createdAt: dateFilter }) },
         select: { customerName: true, customerPhone: true, bikeModel: true, total: true, createdAt: true },
         orderBy: { createdAt: "desc" },
       }),

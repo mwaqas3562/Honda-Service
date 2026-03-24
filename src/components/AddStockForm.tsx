@@ -529,6 +529,8 @@ export default function AddStockForm({
                 onChange={setQuantity}
                 className={inputClass}
                 placeholder="0"
+                showStepper
+                min={0}
               />
             </div>
             <div>
@@ -641,12 +643,14 @@ export default function AddStockForm({
                   )}
                 </div>
                 {/* Qty */}
-                <div className="w-20 shrink-0">
+                <div className="w-28 shrink-0">
                   <IntegerInput
                     value={row.quantity}
                     onChange={(v) => updateBulkField(row.id, "quantity", v)}
                     className="w-full px-2 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-red-500 text-center"
                     placeholder="Qty"
+                    showStepper
+                    min={0}
                   />
                 </div>
                 {/* Price */}

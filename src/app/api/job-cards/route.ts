@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { n } from "@/lib/utils";
 
 // GET /api/job-cards — list all job cards
 export async function GET(req: NextRequest) {
@@ -60,54 +59,34 @@ export async function POST(req: NextRequest) {
     const staffIds = staffAssignments.map((s: { staffId: number }) => s.staffId);
     if (new Set(staffIds).size !== staffIds.length) return NextResponse.json({ error: "Duplicate staff assignment" }, { status: 400 });
 
-    // Atomic job card number generation with retry on unique constraint violation
-    const MAX_RETRIES = 3;
-    let jobCard = null;
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        jobCard = await prisma.$transaction(async (tx) => {
-          // Get next number atomically inside transaction
-          const last = await tx.jobCard.findFirst({
-            orderBy: { id: "desc" },
-            select: { jobCardNumber: true },
-          });
-          let nextNum = 1;
-          if (last?.jobCardNumber) {
-            const parsed = parseInt(last.jobCardNumber, 10);
-            if (!isNaN(parsed)) nextNum = parsed + 1;
-          }
-          const jobCardNumber = String(nextNum).padStart(2, "0");
+    // Atomic job card number generation using DB sequence
+    const jobCard = await prisma.$transaction(async (tx) => {
+      const [{ nextval }] = await tx.$queryRaw<[{ nextval: bigint }]>`SELECT nextval('job_card_number_seq')`;
+      const jobCardNumber = String(nextval).padStart(2, "0");
 
-          return tx.jobCard.create({
-            data: {
-              jobCardNumber,
-              customerName: customerName.trim(),
-              customerPhone: customerPhone.trim(),
-              vehicleNumber: vehicleNumber.trim().toUpperCase(),
-              meterReading: parseInt(meterReading, 10),
-              bikeModel: bikeModel.trim(),
-              laborCost: Math.max(0, Number(laborCost) || 0),
-              status: "open",
-              staffAssignments: {
-                create: staffAssignments.map((s: { staffId: number; labourType?: string; hoursSpent?: number }) => ({
-                  staffId: s.staffId,
-                  labourType: s.labourType?.trim() || null,
-                  hoursSpent: s.hoursSpent != null ? Number(s.hoursSpent) : null,
-                })),
-              },
-            },
-            include: {
-              staffAssignments: { include: { staff: { select: { id: true, name: true, role: true, bonusConfig: { select: { minJobcardAmount: true, bonusValue: true, active: true } } } } } },
-            },
-          });
-        });
-        break; // Success — exit retry loop
-      } catch (err: unknown) {
-        const isUniqueViolation = typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2002";
-        if (isUniqueViolation && attempt < MAX_RETRIES - 1) continue; // Retry
-        throw err; // Final attempt or non-unique error — rethrow
-      }
-    }
+      return tx.jobCard.create({
+        data: {
+          jobCardNumber,
+          customerName: customerName.trim(),
+          customerPhone: customerPhone.trim(),
+          vehicleNumber: vehicleNumber.trim().toUpperCase(),
+          meterReading: parseInt(meterReading, 10),
+          bikeModel: bikeModel.trim(),
+          laborCost: Math.max(0, Number(laborCost) || 0),
+          status: "open",
+          staffAssignments: {
+            create: staffAssignments.map((s: { staffId: number; labourType?: string; hoursSpent?: number }) => ({
+              staffId: s.staffId,
+              labourType: s.labourType?.trim() || null,
+              hoursSpent: s.hoursSpent != null ? Number(s.hoursSpent) : null,
+            })),
+          },
+        },
+        include: {
+          staffAssignments: { include: { staff: { select: { id: true, name: true, role: true, bonusConfig: { select: { minJobcardAmount: true, bonusValue: true, active: true } } } } } },
+        },
+      });
+    });
 
     return NextResponse.json(jobCard, { status: 201 });
   } catch (error: unknown) {

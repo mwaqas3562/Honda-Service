@@ -40,6 +40,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       }
     }
 
+    const VALID_JOB_CARD_STATUSES = ["open", "completed"];
+    if (status && !VALID_JOB_CARD_STATUSES.includes(status)) {
+      return NextResponse.json({ error: `Invalid status. Must be one of: ${VALID_JOB_CARD_STATUSES.join(", ")}` }, { status: 400 });
+    }
+
     // All updates in a single transaction for atomicity
     const updated = await prisma.$transaction(async (tx) => {
       await tx.jobCard.update({
@@ -88,11 +93,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-// DELETE /api/job-cards/[id]
+// DELETE /api/job-cards/[id] — soft-delete
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    await prisma.jobCard.delete({ where: { id: parseInt(id, 10) } });
+    const jobCardId = parseInt(id, 10);
+    if (isNaN(jobCardId)) return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
+    await prisma.jobCard.update({ where: { id: jobCardId }, data: { deletedAt: new Date() } });
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("DELETE /api/job-cards/[id] error:", error);
