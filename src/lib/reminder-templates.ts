@@ -24,6 +24,9 @@ export function getMessageContent(
     case "comeback":
       return `Hello ${name}! It's been a while since your last service. Visit ${BRAND} and get your ${bike} checked. Book now: ${BOOKING_LINK}`;
 
+    case "custom":
+      return `Hi ${name}! Visit ${BRAND} for your next service. Book now: ${BOOKING_LINK}`;
+
     default:
       return `Hi ${name}! Visit ${BRAND} for your next service. Book now: ${BOOKING_LINK}`;
   }
