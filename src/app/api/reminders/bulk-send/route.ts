@@ -59,7 +59,14 @@ function findColumn(headers: string[], candidates: string[]): string | null {
 function parseRows(rawRows: Record<string, unknown>[]): ParsedRow[] {
   if (rawRows.length === 0) return [];
 
-  const headers = Object.keys(rawRows[0]);
+  // Collect headers from all rows (XLSX omits empty columns from row 1)
+  const headerSet = new Set<string>();
+  for (const row of rawRows) {
+    for (const key of Object.keys(row)) {
+      headerSet.add(key);
+    }
+  }
+  const headers = Array.from(headerSet);
 
   // Map columns flexibly
   const phoneCol = findColumn(headers, ["phone", "phonenumber", "phone_number", "contact", "mobile", "cell"]);
