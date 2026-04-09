@@ -594,6 +594,7 @@ enum ReminderType {
   oil_change
   missed_visit
   comeback
+  custom
 }
 
 model ReminderLog {
